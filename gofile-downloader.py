@@ -33,27 +33,35 @@ def die(message: str) -> None:
 class Main:
     def __init__(self, url: str, _max_workers: int = 1) -> None:
 
-        url = url.replace("https://", "").replace("http://", "")
 
-        self.id: str = url[len("gofile.io/d/"):]
-        self.token: str = self._getToken()
-        self.url: str = f"https://api.gofile.io/getContent?contentId={self.id}&token={self.token}&websiteToken=12345&cache=true"
+        try:
+            if not url.split("/")[-2] == "d":
+                die(f"The url propably doesn't have an id in it: {url}")
 
-        self._createDir(self.id)
+            self._id: str = url.split("/")[-1]
+        except IndexError:
+            die(f"Something is wrong with the url: {url}.")
 
-        self._threadedDownloads(_max_workers)
+
+        self._token: str = self._getToken()
+        self._url: str = f"https://api.gofile.io/getContent?contentId={self._id}&token={self._token}&websiteToken=12345&cache=true"
+        self._max_workers: int = _max_workers
+
+        self._createDir(self._id)
+
+        self._threadedDownloads()
 
 
-    def _threadedDownloads(self, max_workers: int) -> None:
+    def _threadedDownloads(self) -> None:
         """
         Parallelize the downloads.
-        :param max_workers: the max thread number.
+
         :return:
         """
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for link in self._getLinks(self.url):
-                executor.submit(self._downloadContent, link, self.token)
+        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+            for link in self._getLinks(self._url):
+                executor.submit(self._downloadContent, link, self._token)
 
 
     @staticmethod
@@ -81,6 +89,8 @@ class Main:
     @staticmethod
     def _getToken() -> str:
         """
+        Gets the access token of account account created.
+
         :return: The access token of an account. Or exit if account creation fail.
         """
 
@@ -91,7 +101,7 @@ class Main:
         account_response: Dict = get("https://api.gofile.io/getAccountDetails?token=" + api_token).json()
 
         if account_response["status"] != 'ok':
-            die("Account creating failed!")
+            die("Account creation failed!")
 
         return api_token
 
@@ -156,6 +166,7 @@ class Main:
                 stdout.write(f"\rDownloaded {filename}: 100.0%!" + NEW_LINE)
                 stdout.flush()
 
+
     @staticmethod
     def _getLinks(url: str) -> Generator[str, None, None]:
         """
@@ -186,11 +197,8 @@ if __name__ == '__main__':
         from sys import argv
 
 
-        url: str
-
-
         try:
-            url = argv[1]
+            url: str = argv[1]
             Main(url=url)
         except IndexError:
             die("specify an url, like: ./gofile-downloader.py https://gofile.io/d/contentid")
