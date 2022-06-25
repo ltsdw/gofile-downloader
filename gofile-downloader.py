@@ -47,7 +47,7 @@ class Main:
     @staticmethod
     def _getToken() -> str:
         """
-        :return: The access token of an account. Or exit if account creating fail.
+        :return: The access token of an account. Or exit if account creation fail.
         """
 
 
