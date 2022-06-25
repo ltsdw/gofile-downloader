@@ -28,8 +28,8 @@ def die(message: str) -> None:
     exit(-1)
 
 
-# increase _max_workers for parallel downloads
-# defaults to one download at time
+# _max_workers is the max number of tasks that will be parallelized
+# defaults to 1 download at time
 class Main:
     def __init__(self, url: str, _max_workers: int = 1) -> None:
 
