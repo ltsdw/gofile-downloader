@@ -1,15 +1,37 @@
-from urllib.request import Request, urlopen
-from urllib.error import URLError
-from bs4 import BeautifulSoup, ResultSet, Tag, NavigableString
 from os import path, mkdir, getcwd, chdir
-from sys import exit, stdout
-from typing import Any, List, Dict, Generator
+from sys import exit, stdout, stderr
+from typing import Dict, Generator
 from requests import get
-from urllib.request import Request, urlopen
+from concurrent.futures import ThreadPoolExecutor
+from platform import system
 
 
+NEW_LINE: str = "\n"
+
+
+if system() == "Windows":
+    NEW_LINE = "\r\n"
+
+
+def die(message: str) -> None:
+    """
+    Display a message of error and exit.
+
+    :param message: message to be displayed.
+    :return:
+    """
+
+
+    stderr.write(message + NEW_LINE)
+    stderr.flush()
+
+    exit(-1)
+
+
+# increase _max_workers for parallel downloads
+# defaults to one download at time
 class Main:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, _max_workers: int = 1) -> None:
 
         url = url.replace("https://", "").replace("http://", "")
 
@@ -19,7 +41,19 @@ class Main:
 
         self._createDir(self.id)
 
-        [self._downloadContent(link, self.token) for link in self._getLinks(self.url)]
+        self._threadedDownloads(_max_workers)
+
+
+    def _threadedDownloads(self, max_workers: int) -> None:
+        """
+        Parallelize the downloads.
+        :param max_workers: the max thread number.
+        :return:
+        """
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for link in self._getLinks(self.url):
+                executor.submit(self._downloadContent, link, self.token)
 
 
     @staticmethod
@@ -57,8 +91,7 @@ class Main:
         account_response: Dict = get("https://api.gofile.io/getAccountDetails?token=" + api_token).json()
 
         if account_response["status"] != 'ok':
-            print("Account creating failed!")
-            exit(-1)    
+            die("Account creating failed!")
 
         return api_token
 
@@ -82,8 +115,6 @@ class Main:
 
             return
 
-        print(f"Downloading {filename}")
-
         headers: Dict = {
             "Cookie": "accountToken=" + token,
             "Accept-Encoding": "gzip, deflate, br",
@@ -101,7 +132,7 @@ class Main:
 
         with get(url, headers=headers, stream=True) as response_handler:
             if response_handler.status_code in (403, 404, 405, 500):
-                print(f"Couldn't download the file from {url}.\nStatus code: {response_handler.status_code}")
+                print(f"Couldn't download the file from {url}." + NEW_LINE + "Status code: {response_handler.status_code}")
                 return
             with open(filename, 'wb+') as handler:
                 has_size: str | None = response_handler.headers.get('Content-Length')
@@ -119,12 +150,11 @@ class Main:
 
                     handler.write(chunk)
 
-                    stdout.write(f"\r{round(progress, 1)}%")
+                    stdout.write(f"\rDownloading {filename}: {round(progress, 1)}%")
                     stdout.flush()
 
-                stdout.write("\n")
+                stdout.write(f"\rDownloaded {filename}: 100.0%!" + NEW_LINE)
                 stdout.flush()
-
 
     @staticmethod
     def _getLinks(url: str) -> Generator[str, None, None]:
@@ -146,9 +176,7 @@ class Main:
                 yield content["link"]
 
         else:
-            print(data)
-            print(f"Failed to get a link as response from the {url}")
-            exit(-1)
+            die(f"Failed to get a link as response from the {url}")
 
 
 if __name__ == '__main__':
@@ -163,13 +191,9 @@ if __name__ == '__main__':
 
         try:
             url = argv[1]
+            Main(url=url)
         except IndexError:
-            print("specify an url, like: ./gofile-downloader.py https://gofile.io/d/contentid")
-            exit(-1)
-
-
-        Main(url=url)
-
+            die("specify an url, like: ./gofile-downloader.py https://gofile.io/d/contentid")
 
     except KeyboardInterrupt:
         exit(1)
