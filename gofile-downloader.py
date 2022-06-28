@@ -5,6 +5,7 @@ from requests import get
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
 from hashlib import sha256
+from urllib.parse import unquote
 
 
 NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
@@ -115,8 +116,8 @@ class Main:
         :return:
         """
 
-        filename = url.split('/')[-1]
-        filename = filename.replace("%20", ' ')
+
+        filename = unquote(url.split('/')[-1])
 
         if path.exists(filename):
             print(f"{filename} already exist, skipping.")
