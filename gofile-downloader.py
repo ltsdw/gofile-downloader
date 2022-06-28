@@ -4,13 +4,10 @@ from typing import Dict, Generator
 from requests import get
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
+from hashlib import sha256
 
 
-NEW_LINE: str = "\n"
-
-
-if system() == "Windows":
-    NEW_LINE = "\r\n"
+NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
 
 
 def die(message: str) -> None:
@@ -28,10 +25,10 @@ def die(message: str) -> None:
     exit(-1)
 
 
-# _max_workers is the max number of tasks that will be parallelized
-# defaults to 1 download at time
+# increase max_workers for parallel downloads
+# defaults to one download at time
 class Main:
-    def __init__(self, url: str, _max_workers: int = 1) -> None:
+    def __init__(self, url: str, password: str | None = None, max_workers: int = 1) -> None:
 
 
         try:
@@ -45,7 +42,8 @@ class Main:
 
         self._token: str = self._getToken()
         self._url: str = f"https://api.gofile.io/getContent?contentId={self._id}&token={self._token}&websiteToken=12345&cache=true"
-        self._max_workers: int = _max_workers
+        self._password: str | None = sha256(password.encode()).hexdigest() if password else None
+        self._max_workers: int = max_workers
 
         self._createDir(self._id)
 
@@ -60,7 +58,7 @@ class Main:
         """
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
-            for link in self._getLinks(self._url):
+            for link in self._getLinks(self._url, self._password):
                 executor.submit(self._downloadContent, link, self._token)
 
 
@@ -168,14 +166,18 @@ class Main:
 
 
     @staticmethod
-    def _getLinks(url: str) -> Generator[str, None, None]:
+    def _getLinks(url: str, password: str | None = None) -> Generator[str, None, None]:
         """
         Yields each and every link of an url.
 
         :param url: url to the content.
+        :param password: content's password.
         :return: an generator of type string, the file link. 
         """
 
+
+        if password:
+            url = url + f"&password={password}"
 
         response: Dict = get(url).json()
 
@@ -191,18 +193,32 @@ class Main:
 
 
 if __name__ == '__main__':
-    print('Starting, please wait...')
-
     try:
         from sys import argv
 
 
-        try:
-            url: str = argv[1]
-            Main(url=url)
-        except IndexError:
-            die("specify an url, like: ./gofile-downloader.py https://gofile.io/d/contentid")
+        url: str | None = None
+        password: str | None = None
 
+        argc: int = len(argv)
+
+        if argc > 1:
+            url = argv[1]
+
+            if argc > 2:
+                password = argv[2]
+
+
+            # Run
+            print('Starting, please wait...')
+            Main(url=url, max_workers = 20, password=password)
+        else:
+            die("Usage:"
+                + NEW_LINE
+                + "python gofile-downloader.py https://gofile.io/d/contentid"
+                + NEW_LINE
+                + "python gofile-downloader.py https://gofile.io/d/contentid password"
+            )
     except KeyboardInterrupt:
         exit(1)
 
