@@ -10,3 +10,7 @@ pip install -r requirements.txt
 ```
 python gofile-downloader.py https://gofile.io/d/contentid
 ```
+If it has password:
+```
+python gofile-downloader.py https://gofile.io/d/contentid password
+```
