@@ -27,9 +27,9 @@ def die(message: str) -> None:
 
 
 # increase max_workers for parallel downloads
-# defaults to one download at time
+# defaults to 5 download at time
 class Main:
-    def __init__(self, url: str, password: str | None = None, max_workers: int = 1) -> None:
+    def __init__(self, url: str, password: str | None = None, max_workers: int = 5) -> None:
 
 
         try:
@@ -212,7 +212,7 @@ if __name__ == '__main__':
 
             # Run
             print('Starting, please wait...')
-            Main(url=url, max_workers = 20, password=password)
+            Main(url=url, password=password)
         else:
             die("Usage:"
                 + NEW_LINE
