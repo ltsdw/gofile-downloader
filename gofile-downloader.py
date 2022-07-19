@@ -34,7 +34,7 @@ class Main:
 
         try:
             if not url.split("/")[-2] == "d":
-                die(f"The url propably doesn't have an id in it: {url}")
+                die(f"The url probably doesn't have an id in it: {url}")
 
             self._id: str = url.split("/")[-1]
         except IndexError:
