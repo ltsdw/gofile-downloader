@@ -1,3 +1,6 @@
+#! /usr/bin/env python3
+
+
 from os import path, mkdir, getcwd, chdir
 from sys import exit, stdout, stderr
 from typing import Dict, Generator
