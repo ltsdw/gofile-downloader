@@ -3,30 +3,44 @@
 
 from os import path, mkdir, getcwd, chdir
 from sys import exit, stdout, stderr
-from typing import Dict, Generator
+from typing import Dict, List
 from requests import get
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
 from hashlib import sha256
-from urllib.parse import unquote
+from uuid import uuid4
+from shutil import move, rmtree
 
 
 NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
 
 
-def die(message: str) -> None:
+def die(_str: str) -> None:
     """
     Display a message of error and exit.
 
-    :param message: message to be displayed.
+    :param _str: a string to be printed.
     :return:
     """
 
 
-    stderr.write(message + NEW_LINE)
+    stderr.write(_str + NEW_LINE)
     stderr.flush()
 
     exit(-1)
+
+
+def _print(_str: str) -> None:
+    """
+    Print a massage.
+
+    :param _str: a string to be printed.
+    :return:
+    """
+
+
+    stdout.write(_str)
+    stdout.flush()
 
 
 # increase max_workers for parallel downloads
@@ -44,12 +58,18 @@ class Main:
             die(f"Something is wrong with the url: {url}.")
 
 
+        self._root_dir: str = path.join(getcwd(), self._id)
         self._token: str = self._getToken()
         self._url: str = f"https://api.gofile.io/getContent?contentId={self._id}&token={self._token}&websiteToken=12345&cache=true"
         self._password: str | None = sha256(password.encode()).hexdigest() if password else None
         self._max_workers: int = max_workers
 
+        # list of files and its respective path, uuid, filename and link
+        self._files_link_list: List[Dict] = []
+
         self._createDir(self._id)
+
+        self._parseLinks(self._id, self._token, self._password)
 
         self._threadedDownloads()
 
@@ -61,23 +81,35 @@ class Main:
         :return:
         """
 
+        chdir(self._root_dir)
+
+        self._createDir("tmp-dir")
+
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
-            for link in self._getLinks(self._url, self._password):
-                executor.submit(self._downloadContent, link, self._token)
+            for item in self._files_link_list:
+                executor.submit(self._downloadContent, item, self._token)
+
+        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+            for item in self._files_link_list:
+                if path.exists(item["uuid"]):
+                    move(item["uuid"], item["path"])
+
+        chdir(self._root_dir)
+
+        rmtree("tmp-dir")
 
 
-    @staticmethod
-    def _createDir(id: str) -> None:
+    def _createDir(self, dirname: str) -> None:
         """
         creates a directory where the files will be saved if doesn't exist and change to it.
 
-        :param id: content of the id.
+        :param dirname: name of the directory to be created.
         :return:
         """
 
         current_dir: str = getcwd()
 
-        filepath: str = path.join(current_dir, id)
+        filepath: str = path.join(current_dir, dirname)
 
         try:
             mkdir(path.join(filepath))
@@ -109,23 +141,26 @@ class Main:
 
 
     @staticmethod
-    def _downloadContent(url: str, token: str, chunk_size: int = 4096) -> None:
+    def _downloadContent(file_info: Dict, token: str, chunk_size: int = 4096) -> None:
         """
-        Download the content of the url.
+        Download a file.
 
-        :param url: url to the content.
+        :param file_info: a dictionary with information about a file to be downloaded.
         :param token: the access token of the account.
         :param chunk_size: the number of bytes it should read into memory.
         :return:
         """
 
 
-        filename = unquote(url.split('/')[-1])
+        uuid: str = file_info["uuid"]
+        filename: str = file_info["filename"]
+        url: str = file_info["link"]
 
-        if path.exists(filename):
-            print(f"{filename} already exist, skipping.")
+        if path.exists(file_info["path"]):
+            if path.getsize(file_info["path"]) > 0:
+                _print(f"{filename} already exist, skipping." + NEW_LINE)
 
-            return
+                return
 
         headers: Dict = {
             "Cookie": "accountToken=" + token,
@@ -144,9 +179,16 @@ class Main:
 
         with get(url, headers=headers, stream=True) as response_handler:
             if response_handler.status_code in (403, 404, 405, 500):
-                print(f"Couldn't download the file from {url}." + NEW_LINE + "Status code: {response_handler.status_code}")
+                _print(
+                    f"Couldn't download the file from {url}."
+                    + NEW_LINE
+                    + "Status code: {response_handler.status_code}"
+                    + NEW_LINE
+                )
+
                 return
-            with open(filename, 'wb+') as handler:
+
+            with open(uuid, 'wb+') as handler:
                 has_size: str | None = response_handler.headers.get('Content-Length')
 
                 total_size: float
@@ -154,7 +196,6 @@ class Main:
                 if has_size:
                     total_size = float(has_size)
                 else:
-                    print(f"{filename} has no content.")
                     return
 
                 for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
@@ -162,23 +203,23 @@ class Main:
 
                     handler.write(chunk)
 
-                    stdout.write(f"\rDownloading {filename}: {round(progress, 1)}%")
-                    stdout.flush()
+                    _print(f"\rDownloading {filename}: {round(progress, 1)}%")
 
-                stdout.write(f"\rDownloaded {filename}: 100.0%!" + NEW_LINE)
-                stdout.flush()
+                _print(f"\rDownloaded {filename}: 100.0%!" + NEW_LINE)
 
 
-    @staticmethod
-    def _getLinks(url: str, password: str | None = None) -> Generator[str, None, None]:
+    def _parseLinks(self, _id: str, token: str, password: str | None = None) -> None:
         """
-        Yields each and every link of an url.
+        Parses for possible links recursively and populate a list with file's info.
 
-        :param url: url to the content.
+        :param _id: url to the content.
+        :param token: access token.
         :param password: content's password.
-        :return: an generator of type string, the file link. 
+        :return:
         """
 
+
+        url: str = f"https://api.gofile.io/getContent?contentId={_id}&token={token}&websiteToken=12345&cache=true"
 
         if password:
             url = url + f"&password={password}"
@@ -186,11 +227,27 @@ class Main:
         response: Dict = get(url).json()
 
         data: Dict = response["data"]
+
         if "contents" in data.keys():
             contents: Dict = data["contents"]
 
             for content in contents.values():
-                yield content["link"]
+                if content["type"] == "folder":
+                    self._createDir(content["name"])
+
+                    self._parseLinks(content["id"], token, password)
+
+                    chdir(path.pardir)
+
+                else:
+                    self._files_link_list.append(
+                        {
+                            "path": path.join(getcwd(), content["name"]),
+                            "uuid": str(uuid4()),
+                            "filename": content["name"],
+                            "link": content["link"]
+                        }
+                    )
 
         else:
             die(f"Failed to get a link as response from the {url}")
@@ -214,7 +271,7 @@ if __name__ == '__main__':
 
 
             # Run
-            print('Starting, please wait...')
+            _print('Starting, please wait...' + NEW_LINE)
             Main(url=url, password=password)
         else:
             die("Usage:"
