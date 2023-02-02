@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 
-from os import path, mkdir, getcwd, chdir
+from os import path, mkdir, getcwd, chdir, getenv
 from sys import exit, stdout, stderr
 from typing import Dict, List
 from requests import get
@@ -57,6 +57,11 @@ class Main:
         except IndexError:
             die(f"Something is wrong with the url: {url}.")
 
+
+        self._downloaddir: str | None = getenv("GF_DOWNLOADDIR")
+
+        if self._downloaddir and path.exists(self._downloaddir):
+            chdir(self._downloaddir)
 
         self._root_dir: str = path.join(getcwd(), self._id)
         self._token: str = self._getToken()
