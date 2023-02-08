@@ -32,7 +32,7 @@ def die(_str: str) -> None:
 
 def _print(_str: str) -> None:
     """
-    Print a massage.
+    Print a message.
 
     :param _str: a string to be printed.
     :return:
