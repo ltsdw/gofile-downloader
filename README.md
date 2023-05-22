@@ -8,12 +8,12 @@ pip install -r requirements.txt
 
 # Usage
 ```
-python gofile-downloader.py https://gofile.io/d/contentid
+python gofile-downloader.py your-premium-account-token-here https://gofile.io/d/contentid
 ```
 
 If it has password:
 ```
-python gofile-downloader.py https://gofile.io/d/contentid password
+python gofile-downloader.py your-premium-account-token-here https://gofile.io/d/contentid password
 ```
 
 Use the environment variable **`GF_DOWNLOADDIR`** to specify where to download to (the
