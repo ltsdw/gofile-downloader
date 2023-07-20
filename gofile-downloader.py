@@ -65,7 +65,7 @@ class Main:
 
         self._root_dir: str = path.join(getcwd(), self._id)
         self._token: str = self._getToken()
-        self._url: str = f"https://api.gofile.io/getContent?contentId={self._id}&token={self._token}&websiteToken=12345&cache=true"
+        self._url: str = f"https://api.gofile.io/getContent?contentId={self._id}&token={self._token}&websiteToken=7fd94ds12fds4&cache=true"
         self._password: str | None = sha256(password.encode()).hexdigest() if password else None
         self._max_workers: int = max_workers
 
@@ -224,7 +224,7 @@ class Main:
         """
 
 
-        url: str = f"https://api.gofile.io/getContent?contentId={_id}&token={token}&websiteToken=12345&cache=true"
+        url: str = f"https://api.gofile.io/getContent?contentId={_id}&token={token}&websiteToken=7fd94ds12fds4&cache=true"
 
         if password:
             url = url + f"&password={password}"
