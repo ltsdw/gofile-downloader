@@ -46,7 +46,7 @@ def _print(_str: str) -> None:
 # increase max_workers for parallel downloads
 # defaults to 5 download at time
 class Main:
-    def __init__(self, token: str, url: str, password: str | None = None, max_workers: int = 5) -> None:
+    def __init__(self, url: str, password: str | None = None, max_workers: int = 5) -> None:
 
 
         try:
@@ -64,7 +64,7 @@ class Main:
             chdir(self._downloaddir)
 
         self._root_dir: str = path.join(getcwd(), self._id)
-        self._token: str = token
+        self._token: str = self._getToken()
         self._url: str = f"https://api.gofile.io/getContent?contentId={self._id}&token={self._token}&websiteToken=12345&cache=true"
         self._password: str | None = sha256(password.encode()).hexdigest() if password else None
         self._max_workers: int = max_workers
@@ -231,9 +231,6 @@ class Main:
 
         response: Dict = get(url).json()
 
-        if response["status"] == "error-notPremium":
-            die("You need to provide a token from a premium account")
-
         data: Dict = response["data"]
 
         if "contents" in data.keys():
@@ -266,33 +263,28 @@ if __name__ == '__main__':
         from sys import argv
 
 
-        token: str | None = None
         url: str | None = None
         password: str | None = None
 
         argc: int = len(argv)
 
-        if argc > 2:
-            token = argv[1]
+        if argc > 1:
+            url = argv[1]
 
-            url = argv[2]
+            if argc > 2:
+                password = argv[2]
 
+
+            # Run
+            _print('Starting, please wait...' + NEW_LINE)
+            Main(url=url, password=password)
         else:
             die("Usage:"
                 + NEW_LINE
-                + "python gofile-downloader.py your-token-here https://gofile.io/d/contentid"
+                + "python gofile-downloader.py https://gofile.io/d/contentid"
                 + NEW_LINE
-                + "python gofile-downloader.py your-token-here https://gofile.io/d/contentid password"
+                + "python gofile-downloader.py https://gofile.io/d/contentid password"
             )
-
-        if argc > 4:
-            password = argv[3]
-
-
-        # Run
-        _print('Starting, please wait...' + NEW_LINE)
-        Main(token=token, url=url, password=password)
-
     except KeyboardInterrupt:
         exit(1)
 
