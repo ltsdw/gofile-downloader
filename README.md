@@ -22,3 +22,9 @@ path must exist already):
 GF_DOWNLOADDIR="/path/to/the/directory" python gofile-downloader.py https://gofile.io/d/contentid
 
 ```
+
+Use the environment variable **`GF_USERAGENT`** to specify broser user agent (default Mozilla/5.0):
+```
+GF_USERAGENT="user agent string" python gofile-downloader.py https://gofile.io/d/contentid
+
+```

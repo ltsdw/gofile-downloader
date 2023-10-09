@@ -10,6 +10,7 @@ from platform import system
 from hashlib import sha256
 from uuid import uuid4
 from shutil import move, rmtree
+from time import perf_counter
 
 
 NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
@@ -88,20 +89,9 @@ class Main:
 
         chdir(self._root_dir)
 
-        self._createDir("tmp-dir")
-
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for item in self._files_link_list:
-                executor.submit(self._downloadContent, item, self._token)
-
-        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
-            for item in self._files_link_list:
-                if path.exists(item["uuid"]):
-                    move(item["uuid"], item["path"])
-
-        chdir(self._root_dir)
-
-        rmtree("tmp-dir")
+                executor.submit(self._downloadContent, item, self._token, 16384)
 
 
     def _createDir(self, dirname: str) -> None:
@@ -133,11 +123,17 @@ class Main:
         :return: The access token of an account. Or exit if account creation fail.
         """
 
+        headers: Dict = {
+            "User-Agent": getenv("GF_USERAGENT") if getenv("GF_USERAGENT") else "Mozilla/5.0",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+        }
 
-        create_account_response: Dict = get("https://api.gofile.io/createAccount").json()
+        create_account_response: Dict = get("https://api.gofile.io/createAccount", headers=headers).json()
         api_token = create_account_response["data"]["token"]
         
-        account_response: Dict = get("https://api.gofile.io/getAccountDetails?token=" + api_token).json()
+        account_response: Dict = get("https://api.gofile.io/getAccountDetails?token=" + api_token, headers=headers).json()
 
         if account_response["status"] != 'ok':
             die("Account creation failed!")
@@ -170,7 +166,7 @@ class Main:
         headers: Dict = {
             "Cookie": "accountToken=" + token,
             "Accept-Encoding": "gzip, deflate, br",
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": getenv("GF_USERAGENT") if getenv("GF_USERAGENT") else "Mozilla/5.0",
             "Accept": "*/*",
             "Referer": url + ("/" if not url.endswith("/") else ""),
             "Origin": url,
@@ -182,35 +178,66 @@ class Main:
             "Cache-Control": "no-cache"
         }
 
-        with get(url, headers=headers, stream=True) as response_handler:
-            if response_handler.status_code in (403, 404, 405, 500):
-                _print(
-                    f"Couldn't download the file from {url}."
-                    + NEW_LINE
-                    + "Status code: {response_handler.status_code}"
-                    + NEW_LINE
-                )
+        # check for partial download and resume from last byte
+        part_size: int = 0
+        if path.isfile(filename + '.part'):
+            part_size = int(path.getsize(filename + '.part'))
+            headers["Range"] = f"bytes={part_size}-"
 
-                return
+        try:
+            with get(url, headers=headers, stream=True, timeout=(9, 27)) as response_handler:
+                if ((response_handler.status_code in (403, 404, 405, 500)) or
+                    (part_size == 0 and response_handler.status_code != 200) or
+                    (part_size > 0 and response_handler.status_code != 206)):
+                    _print(
+                        f"Couldn't download the file from {url}."
+                        + NEW_LINE
+                        + f"Status code: {response_handler.status_code}"
+                        + NEW_LINE
+                    )
 
-            with open(uuid, 'wb+') as handler:
-                has_size: str | None = response_handler.headers.get('Content-Length')
-
-                total_size: float
-
-                if has_size:
-                    total_size = float(has_size)
-                else:
                     return
 
-                for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
-                    progress: float = i * chunk_size / total_size * 100
+                has_size: str | None = response_handler.headers.get('Content-Length') if part_size == 0 else response_handler.headers.get('Content-Range').split("/")[-1]
+                if has_size is None:
+                    _print(
+                        f"Couldn't find the file size from {url}."
+                        + NEW_LINE
+                        + f"Status code: {response_handler.status_code}"
+                        +NEW_LINE
+                    )
 
-                    handler.write(chunk)
+                    return
 
-                    _print(f"\rDownloading {filename}: {round(progress, 1)}%")
+                with open(filename + '.part', 'ab') as handler:
+                    total_size: float = float(has_size)
 
-                _print(f"\rDownloaded {filename}: 100.0%!" + NEW_LINE)
+                    start_time: float = perf_counter()
+                    for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
+                        progress: float = (part_size + (i * len(chunk))) / total_size * 100
+
+                        handler.write(chunk)
+
+                        rate: float = (i * len(chunk)) / (perf_counter()-start_time)
+                        unit: str = "B/s"
+                        if rate < (1024):
+                            unit = "B/s"
+                        elif rate < (1024*1024):
+                            rate /= 1024
+                            unit = "KB/s"
+                        elif rate < (1024*1024*1024):
+                            rate /= (1024 * 1024)
+                            unit = "MB/s"
+                        elif rate < (1024*1024*1024*1024):
+                            rate /= (1024 * 1024 * 1024)
+                            unit = "GB/s"
+                        _print(f"\rDownloading {filename + '.part'}: {part_size + i * len(chunk)} of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}")
+
+                
+        finally:
+            if path.getsize(filename + '.part') == int(has_size):
+                move(filename + '.part', filename)
+                _print(f"\rDownloading {filename}: {path.getsize(filename)} of {has_size} Done!" + NEW_LINE)
 
 
     def _parseLinks(self, _id: str, token: str, password: str | None = None) -> None:
@@ -228,6 +255,13 @@ class Main:
 
         if password:
             url = url + f"&password={password}"
+
+        headers: Dict = {
+            "User-Agent": getenv("GF_USERAGENT") if getenv("GF_USERAGENT") else "Mozilla/5.0",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+        }
 
         response: Dict = get(url).json()
 
@@ -277,7 +311,7 @@ if __name__ == '__main__':
 
             # Run
             _print('Starting, please wait...' + NEW_LINE)
-            Main(url=url, password=password)
+            Main(url=url, password=password, max_workers=3)
         else:
             die("Usage:"
                 + NEW_LINE
