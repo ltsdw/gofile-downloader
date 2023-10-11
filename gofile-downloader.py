@@ -4,7 +4,7 @@
 from os import path, mkdir, getcwd, chdir, getenv
 from sys import exit, stdout, stderr
 from typing import Dict, List
-from requests import get, utils
+from requests import get
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
 from hashlib import sha256
