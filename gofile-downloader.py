@@ -4,11 +4,10 @@
 from os import path, mkdir, getcwd, chdir, getenv
 from sys import exit, stdout, stderr
 from typing import Dict, List
-from requests import get
+from requests import get, utils
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
 from hashlib import sha256
-from uuid import uuid4
 from shutil import move, rmtree
 from time import perf_counter
 
@@ -70,7 +69,7 @@ class Main:
         self._password: str | None = sha256(password.encode()).hexdigest() if password else None
         self._max_workers: int = max_workers
 
-        # list of files and its respective path, uuid, filename and link
+        # list of files and its respective path, filename and link
         self._files_link_list: List[Dict] = []
 
         self._createDir(self._id)
@@ -152,16 +151,14 @@ class Main:
         :return:
         """
 
-
-        uuid: str = file_info["uuid"]
-        filename: str = file_info["filename"]
-        url: str = file_info["link"]
-
         if path.exists(file_info["path"]):
             if path.getsize(file_info["path"]) > 0:
-                _print(f"{filename} already exist, skipping." + NEW_LINE)
+                _print(f"{file_info['filename']} already exist, skipping." + NEW_LINE)
 
                 return
+
+        filename: str = file_info["path"] + '.part'
+        url: str = file_info["link"]
 
         headers: Dict = {
             "Cookie": "accountToken=" + token,
@@ -180,9 +177,10 @@ class Main:
 
         # check for partial download and resume from last byte
         part_size: int = 0
-        if path.isfile(filename + '.part'):
-            part_size = int(path.getsize(filename + '.part'))
+        if path.isfile(filename):
+            part_size = int(path.getsize(filename))
             headers["Range"] = f"bytes={part_size}-"
+
 
         try:
             with get(url, headers=headers, stream=True, timeout=(9, 27)) as response_handler:
@@ -209,7 +207,7 @@ class Main:
 
                     return
 
-                with open(filename + '.part', 'ab') as handler:
+                with open(filename, 'ab') as handler:
                     total_size: float = float(has_size)
 
                     start_time: float = perf_counter()
@@ -231,13 +229,13 @@ class Main:
                         elif rate < (1024*1024*1024*1024):
                             rate /= (1024 * 1024 * 1024)
                             unit = "GB/s"
-                        _print(f"\rDownloading {filename + '.part'}: {part_size + i * len(chunk)} of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}")
+                        _print(f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)} of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}")
 
                 
         finally:
-            if path.getsize(filename + '.part') == int(has_size):
-                move(filename + '.part', filename)
-                _print(f"\rDownloading {filename}: {path.getsize(filename)} of {has_size} Done!" + NEW_LINE)
+            if path.getsize(filename) == int(has_size):
+                _print(f"\rDownloading {file_info['filename']}: {path.getsize(filename)} of {has_size} Done!" + NEW_LINE)
+                move(filename, file_info["path"])
 
 
     def _parseLinks(self, _id: str, token: str, password: str | None = None) -> None:
@@ -282,7 +280,6 @@ class Main:
                     self._files_link_list.append(
                         {
                             "path": path.join(getcwd(), content["name"]),
-                            "uuid": str(uuid4()),
                             "filename": content["name"],
                             "link": content["link"]
                         }
@@ -321,4 +318,3 @@ if __name__ == '__main__':
             )
     except KeyboardInterrupt:
         exit(1)
-
