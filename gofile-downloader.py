@@ -65,7 +65,6 @@ class Main:
 
         self._root_dir: str = path.join(getcwd(), self._id)
         self._token: str = self._getToken()
-        self._url: str = f"https://api.gofile.io/getContent?contentId={self._id}&token={self._token}&websiteToken=7fd94ds12fds4&cache=true"
         self._password: str | None = sha256(password.encode()).hexdigest() if password else None
         self._max_workers: int = max_workers
 
@@ -131,7 +130,7 @@ class Main:
 
         create_account_response: Dict = get("https://api.gofile.io/createAccount", headers=headers).json()
         api_token = create_account_response["data"]["token"]
-        
+
         account_response: Dict = get("https://api.gofile.io/getAccountDetails?token=" + api_token, headers=headers).json()
 
         if account_response["status"] != 'ok':
@@ -196,7 +195,10 @@ class Main:
 
                     return
 
-                has_size: str | None = response_handler.headers.get('Content-Length') if part_size == 0 else response_handler.headers.get('Content-Range').split("/")[-1]
+                has_size: str | None = response_handler.headers.get('Content-Length') \
+                    if part_size == 0 \
+                    else response_handler.headers.get('Content-Range').split("/")[-1]
+
                 if has_size is None:
                     _print(
                         f"Couldn't find the file size from {url}."
@@ -231,7 +233,7 @@ class Main:
                             unit = "GB/s"
                         _print(f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)} of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}")
 
-                
+
         finally:
             if path.getsize(filename) == int(has_size):
                 _print(f"\rDownloading {file_info['filename']}: {path.getsize(filename)} of {has_size} Done!" + NEW_LINE)
@@ -248,8 +250,7 @@ class Main:
         :return:
         """
 
-
-        url: str = f"https://api.gofile.io/getContent?contentId={_id}&token={token}&websiteToken=7fd94ds12fds4&cache=true"
+        url: str = f"https://api.gofile.io/getContent?contentId={_id}&token={token}&wt=4fd6sg89d7s6&cache=true"
 
         if password:
             url = url + f"&password={password}"
