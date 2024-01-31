@@ -2,6 +2,11 @@
 Download files from https://gofile.io
 
 # Requirements
+
+Python version 3.10 or newer.
+
+Modules:
+
 ```
 pip install -r requirements.txt
 ```
