@@ -8,7 +8,7 @@ Python version 3.10 or newer.
 Modules:
 
 ```
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 # Usage
