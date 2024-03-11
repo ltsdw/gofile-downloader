@@ -4,11 +4,11 @@
 from os import path, mkdir, getcwd, chdir, getenv
 from sys import exit, stdout, stderr
 from typing import Dict, List
-from requests import get
+from requests import get, post
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
 from hashlib import sha256
-from shutil import move, rmtree
+from shutil import move
 from time import perf_counter
 
 
@@ -22,7 +22,6 @@ def die(_str: str) -> None:
     :param _str: a string to be printed.
     :return:
     """
-
 
     stderr.write(_str + NEW_LINE)
     stderr.flush()
@@ -38,7 +37,6 @@ def _print(_str: str) -> None:
     :return:
     """
 
-
     stdout.write(_str)
     stdout.flush()
 
@@ -47,8 +45,6 @@ def _print(_str: str) -> None:
 # defaults to 5 download at time
 class Main:
     def __init__(self, url: str, password: str | None = None, max_workers: int = 5) -> None:
-
-
         try:
             if not url.split("/")[-2] == "d":
                 die(f"The url probably doesn't have an id in it: {url}")
@@ -56,7 +52,6 @@ class Main:
             self._id: str = url.split("/")[-1]
         except IndexError:
             die(f"Something is wrong with the url: {url}.")
-
 
         self._downloaddir: str | None = getenv("GF_DOWNLOADDIR")
 
@@ -68,13 +63,12 @@ class Main:
         self._password: str | None = sha256(password.encode()).hexdigest() if password else None
         self._max_workers: int = max_workers
 
-        # list of files and its respective path, filename and link
+        # list of dictionaries format files and its respective path, filename and link
         self._files_link_list: List[Dict] = []
 
         self._createDir(self._id)
-
+        chdir(self._id)
         self._parseLinks(self._id, self._token, self._password)
-
         self._threadedDownloads()
 
 
@@ -101,7 +95,6 @@ class Main:
         """
 
         current_dir: str = getcwd()
-
         filepath: str = path.join(current_dir, dirname)
 
         try:
@@ -109,8 +102,6 @@ class Main:
         # if the directory already exist is safe to do nothing
         except FileExistsError:
             pass
-
-        chdir(filepath)
 
 
     @staticmethod
@@ -128,15 +119,12 @@ class Main:
             "Connection": "keep-alive",
         }
 
-        create_account_response: Dict = get("https://api.gofile.io/createAccount", headers=headers).json()
-        api_token = create_account_response["data"]["token"]
+        create_account_response: Dict = post("https://api.gofile.io/accounts", headers=headers).json()
 
-        account_response: Dict = get("https://api.gofile.io/getAccountDetails?token=" + api_token, headers=headers).json()
-
-        if account_response["status"] != 'ok':
+        if create_account_response["status"] != "ok":
             die("Account creation failed!")
 
-        return api_token
+        return create_account_response["data"]["token"]
 
 
     @staticmethod
@@ -180,6 +168,8 @@ class Main:
             part_size = int(path.getsize(filename))
             headers["Range"] = f"bytes={part_size}-"
 
+        has_size: str | None = None
+        message: str = " "
 
         try:
             with get(url, headers=headers, stream=True, timeout=(9, 27)) as response_handler:
@@ -195,11 +185,11 @@ class Main:
 
                     return
 
-                has_size: str | None = response_handler.headers.get('Content-Length') \
+                has_size = response_handler.headers.get('Content-Length') \
                     if part_size == 0 \
                     else response_handler.headers.get('Content-Range').split("/")[-1]
 
-                if has_size is None:
+                if not has_size:
                     _print(
                         f"Couldn't find the file size from {url}."
                         + NEW_LINE
@@ -231,13 +221,40 @@ class Main:
                         elif rate < (1024*1024*1024*1024):
                             rate /= (1024 * 1024 * 1024)
                             unit = "GB/s"
-                        _print(f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)} of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}")
 
+                        _print("\r" + " " * len(message))
 
+                        message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
+                        f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
+
+                        _print(message)
         finally:
             if path.getsize(filename) == int(has_size):
-                _print(f"\rDownloading {file_info['filename']}: {path.getsize(filename)} of {has_size} Done!" + NEW_LINE)
+                _print("\r" + " " * len(message))
+
+                message = f"\rDownloading {file_info['filename']}: {path.getsize(filename)} of {has_size} Done!" + NEW_LINE
+
+                _print(message)
                 move(filename, file_info["path"])
+
+
+    def _cacheLink(self, filepath: str, filename: str, link: str) -> None:
+        """
+        Caches the link into the _files_link_list.
+
+        :param filepath: file's path.
+        :param filename: filename.
+        :param link: link to be cached.
+        :return:
+        """
+
+        self._files_link_list.append(
+            {
+                "path": path.join(filepath, filename),
+                "filename": filename,
+                "link": link
+            }
+        )
 
 
     def _parseLinks(self, _id: str, token: str, password: str | None = None) -> None:
@@ -250,7 +267,7 @@ class Main:
         :return:
         """
 
-        url: str = f"https://api.gofile.io/getContent?contentId={_id}&token={token}&wt=4fd6sg89d7s6&cache=true"
+        url: str = f"https://api.gofile.io/contents/{_id}?wt=4fd6sg89d7s6&cache=true"
 
         if password:
             url = url + f"&password={password}"
@@ -260,44 +277,43 @@ class Main:
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
+            "Authorization": "Bearer" + " " + token,
         }
 
-        response: Dict = get(url).json()
+        response: Dict = get(url, headers=headers).json()
+
+        if response["status"] != "ok":
+            die(f"Failed to get a link as response from the {url}")
 
         data: Dict = response["data"]
 
-        if "contents" in data.keys():
-            contents: Dict = data["contents"]
+        if data["type"] == "folder":
+            children_ids: List[str] = data["childrenIds"]
 
-            for content in contents.values():
-                if content["type"] == "folder":
-                    self._createDir(content["name"])
+            self._createDir(data["name"])
+            chdir(data["name"])
 
-                    self._parseLinks(content["id"], token, password)
+            if not children_ids:
+                chdir(path.pardir)
 
+            for child_id in children_ids:
+                child: Dict = data["children"][child_id]
+
+                if data["children"][child_id]["type"] == "folder":
+                    self._parseLinks(child["code"], token, password)
                     chdir(path.pardir)
-
                 else:
-                    self._files_link_list.append(
-                        {
-                            "path": path.join(getcwd(), content["name"]),
-                            "filename": content["name"],
-                            "link": content["link"]
-                        }
-                    )
-
+                    self._cacheLink(getcwd(), child["name"], child["link"])
         else:
-            die(f"Failed to get a link as response from the {url}")
+            self._cacheLink(getcwd(), data["name"], data["link"])
 
 
 if __name__ == '__main__':
     try:
         from sys import argv
 
-
         url: str | None = None
         password: str | None = None
-
         argc: int = len(argv)
 
         if argc > 1:
@@ -305,7 +321,6 @@ if __name__ == '__main__':
 
             if argc > 2:
                 password = argv[2]
-
 
             # Run
             _print('Starting, please wait...' + NEW_LINE)
@@ -319,3 +334,4 @@ if __name__ == '__main__':
             )
     except KeyboardInterrupt:
         exit(1)
+
