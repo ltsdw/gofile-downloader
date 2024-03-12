@@ -293,17 +293,15 @@ class Main:
             self._createDir(data["name"])
             chdir(data["name"])
 
-            if not children_ids:
-                chdir(path.pardir)
-
             for child_id in children_ids:
                 child: Dict = data["children"][child_id]
 
                 if data["children"][child_id]["type"] == "folder":
                     self._parseLinks(child["code"], token, password)
-                    chdir(path.pardir)
                 else:
                     self._cacheLink(getcwd(), child["name"], child["link"])
+
+            chdir(path.pardir)
         else:
             self._cacheLink(getcwd(), data["name"], data["link"])
 
