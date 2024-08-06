@@ -3,7 +3,7 @@ Download files from https://gofile.io
 
 # Requirements
 
-Python version 3.10 or newer.
+Python version 3.10 or newer and [Pip](https://pypi.org/project/pip/).
 
 Modules:
 
