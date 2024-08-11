@@ -288,16 +288,14 @@ class Main:
         data: Dict = response["data"]
 
         if data["type"] == "folder":
-            children_ids: List[str] = data["childrenIds"]
-
             self._createDir(data["name"])
             chdir(data["name"])
 
-            for child_id in children_ids:
+            for child_id in data["children"]:
                 child: Dict = data["children"][child_id]
 
-                if data["children"][child_id]["type"] == "folder":
-                    self._parseLinks(child["code"], token, password)
+                if child["type"] == "folder":
+                    self._parseLinks(child["id"], token, password)
                 else:
                     self._cacheLink(getcwd(), child["name"], child["link"])
 
