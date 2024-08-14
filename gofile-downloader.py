@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 
-from os import chdir, getcwd, getenv, mkdir, path
+from os import chdir, getcwd, getenv, listdir, mkdir, path, rmdir
 from sys import exit, stdout, stderr
 from typing import Dict, List, TextIO
 from requests import get, post
@@ -52,7 +52,6 @@ class Main:
 
         self._root_dir: str = root_dir if root_dir else getcwd()
         self._max_workers: int = max_workers
-
         token: str | None = getenv("GF_TOKEN")
         self._token: str = token if token else self._getToken()
 
@@ -329,16 +328,21 @@ class Main:
             content_id: str = url.split("/")[-1]
         except IndexError:
             _print(f"{url} doesn't seem a valid url." + NEW_LINE)
-
             return
 
-        content_dir: str = path.join(getcwd(), content_id)
+        content_dir: str = path.join(self._root_dir, content_id)
         _password: str | None = sha256(password.encode()).hexdigest() if password else password
         files_link_list: List[Dict] = []
 
-        self._createDir(content_id)
+        self._createDir(content_dir)
         chdir(content_id)
         self._parseLinks(content_id, files_link_list, _password)
+
+        # removes the root content directory if there's no file or subdirectory
+        if not listdir(content_dir) and not files_link_list:
+            rmdir(content_dir)
+            return
+
         self._threadedDownloads(content_dir, files_link_list)
 
 
@@ -355,7 +359,6 @@ class Main:
 
         if not (path.exists(url_or_file) and path.isfile(url_or_file)):
             self._download(url_or_file, _password)
-
             return
 
         with open(url_or_file, "r") as f:
