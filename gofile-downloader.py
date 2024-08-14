@@ -1,9 +1,9 @@
 #! /usr/bin/env python3
 
 
-from os import path, mkdir, getcwd, chdir, getenv
+from os import chdir, getcwd, getenv, mkdir, path
 from sys import exit, stdout, stderr
-from typing import Dict, List
+from typing import Dict, List, TextIO
 from requests import get, post
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
@@ -15,27 +15,29 @@ from time import perf_counter
 NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
 
 
-def _print(_str: str) -> None:
+def _print(msg: str, error: bool = False) -> None:
     """
     Print a message.
 
-    :param _str: a string to be printed.
+    :param msg: a string to be printed.
+    :param error: if the error stream output should be used instead of the standard output.
     :return:
     """
 
-    stdout.write(_str)
-    stdout.flush()
+    output: TextIO = stderr if error else stdout
+    output.write(msg)
+    output.flush()
 
 
-def die(_str: str) -> None:
+def die(msg: str) -> None:
     """
     Display a message of error and exit.
 
-    :param _str: a string to be printed.
+    :param msg: a string to be printed.
     :return:
     """
 
-    _print(_str + NEW_LINE)
+    _print(msg + NEW_LINE, True)
     exit(-1)
 
 
