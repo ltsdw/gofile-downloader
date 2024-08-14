@@ -15,20 +15,6 @@ from time import perf_counter
 NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
 
 
-def die(_str: str) -> None:
-    """
-    Display a message of error and exit.
-
-    :param _str: a string to be printed.
-    :return:
-    """
-
-    stderr.write(_str + NEW_LINE)
-    stderr.flush()
-
-    exit(-1)
-
-
 def _print(_str: str) -> None:
     """
     Print a message.
@@ -41,49 +27,52 @@ def _print(_str: str) -> None:
     stdout.flush()
 
 
+def die(_str: str) -> None:
+    """
+    Display a message of error and exit.
+
+    :param _str: a string to be printed.
+    :return:
+    """
+
+    _print(_str + NEW_LINE)
+    exit(-1)
+
+
 # increase max_workers for parallel downloads
 # defaults to 5 download at time
 class Main:
     def __init__(self, url: str, password: str | None = None, max_workers: int = 5) -> None:
-        try:
-            if not url.split("/")[-2] == "d":
-                die(f"The url probably doesn't have an id in it: {url}")
+        root_dir: str | None = getenv("GF_DOWNLOADDIR")
 
-            self._id: str = url.split("/")[-1]
-        except IndexError:
-            die(f"Something is wrong with the url: {url}.")
+        if root_dir and path.exists(root_dir):
+            chdir(root_dir)
 
-        self._downloaddir: str | None = getenv("GF_DOWNLOADDIR")
-
-        if self._downloaddir and path.exists(self._downloaddir):
-            chdir(self._downloaddir)
-
-        self._root_dir: str = path.join(getcwd(), self._id)
-        self._token: str = self._getToken()
-        self._password: str | None = sha256(password.encode()).hexdigest() if password else None
+        self._root_dir: str = root_dir if root_dir else getcwd()
         self._max_workers: int = max_workers
 
-        # list of dictionaries format files and its respective path, filename and link
-        self._files_link_list: List[Dict] = []
+        token: str | None = getenv("GF_TOKEN")
+        self._token: str = token if token else self._getToken()
 
-        self._createDir(self._id)
-        chdir(self._id)
-        self._parseLinks(self._id, self._token, self._password)
-        self._threadedDownloads()
+        self._parseUrlOrFile(url, password)
 
 
-    def _threadedDownloads(self) -> None:
+    def _threadedDownloads(self, content_dir: str, files_link_list: List[Dict]) -> None:
         """
         Parallelize the downloads.
 
+        "param content_dir": cotent directory.
+        :param files_link_list: list of files in the format {"path": "", "filename": "", "link": ""}
         :return:
         """
 
-        chdir(self._root_dir)
+        chdir(content_dir)
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
-            for item in self._files_link_list:
+            for item in files_link_list:
                 executor.submit(self._downloadContent, item, self._token, 16384)
+
+        chdir(self._root_dir)
 
 
     def _createDir(self, dirname: str) -> None:
@@ -138,13 +127,14 @@ class Main:
         :return:
         """
 
-        if path.exists(file_info["path"]):
-            if path.getsize(file_info["path"]) > 0:
-                _print(f"{file_info['filename']} already exist, skipping." + NEW_LINE)
+        filepath: str = path.join(file_info["path"], file_info["filename"])
+        if path.exists(filepath):
+            if path.getsize(filepath) > 0:
+                _print(f"{filepath} already exist, skipping." + NEW_LINE)
 
                 return
 
-        filename: str = file_info["path"] + '.part'
+        tmp_file: str =  filepath + '.part'
         url: str = file_info["link"]
 
         headers: Dict = {
@@ -164,8 +154,8 @@ class Main:
 
         # check for partial download and resume from last byte
         part_size: int = 0
-        if path.isfile(filename):
-            part_size = int(path.getsize(filename))
+        if path.isfile(tmp_file):
+            part_size = int(path.getsize(tmp_file))
             headers["Range"] = f"bytes={part_size}-"
 
         has_size: str | None = None
@@ -199,7 +189,7 @@ class Main:
 
                     return
 
-                with open(filename, 'ab') as handler:
+                with open(tmp_file, 'ab') as handler:
                     total_size: float = float(has_size)
 
                     start_time: float = perf_counter()
@@ -229,40 +219,25 @@ class Main:
 
                         _print(message)
         finally:
-            if path.getsize(filename) == int(has_size):
+            if path.getsize(tmp_file) == int(has_size):
                 _print("\r" + " " * len(message))
+                _print(f"\rDownloading {file_info['filename']}: {path.getsize(tmp_file)} of {has_size} Done!" + NEW_LINE)
+                message = " "
 
-                message = f"\rDownloading {file_info['filename']}: {path.getsize(filename)} of {has_size} Done!" + NEW_LINE
-
-                _print(message)
-                move(filename, file_info["path"])
-
-
-    def _cacheLink(self, filepath: str, filename: str, link: str) -> None:
-        """
-        Caches the link into the _files_link_list.
-
-        :param filepath: file's path.
-        :param filename: filename.
-        :param link: link to be cached.
-        :return:
-        """
-
-        self._files_link_list.append(
-            {
-                "path": path.join(filepath, filename),
-                "filename": filename,
-                "link": link
-            }
-        )
+                move(tmp_file, filepath)
 
 
-    def _parseLinks(self, _id: str, token: str, password: str | None = None) -> None:
+    def _parseLinks(
+        self,
+        _id: str,
+        files_link_list: List[Dict],
+        password: str | None = None
+    ) -> None:
         """
         Parses for possible links recursively and populate a list with file's info.
 
         :param _id: url to the content.
-        :param token: access token.
+        :param files_link_list: list of files that will be populated in the format {"path": "", "filename": "", "link": ""}
         :param password: content's password.
         :return:
         """
@@ -277,7 +252,7 @@ class Main:
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
-            "Authorization": "Bearer" + " " + token,
+            "Authorization": "Bearer" + " " + self._token,
         }
 
         response: Dict = get(url, headers=headers).json()
@@ -287,6 +262,10 @@ class Main:
 
         data: Dict = response["data"]
 
+        if "password" in data and "passwordStatus" in data and data["passwordStatus"] != "passwordOk":
+            _print("Password protected link. Please provide the password." + NEW_LINE)
+            return
+
         if data["type"] == "folder":
             self._createDir(data["name"])
             chdir(data["name"])
@@ -295,13 +274,86 @@ class Main:
                 child: Dict = data["children"][child_id]
 
                 if child["type"] == "folder":
-                    self._parseLinks(child["id"], token, password)
+                    self._parseLinks(child["id"],files_link_list, password)
                 else:
-                    self._cacheLink(getcwd(), child["name"], child["link"])
+                    files_link_list.append(
+                        {
+                            "path": getcwd(),
+                            "filename": child["name"],
+                            "link": child["link"]
+                        }
+                    )
 
             chdir(path.pardir)
         else:
-            self._cacheLink(getcwd(), data["name"], data["link"])
+            files_link_list.append(
+                {
+                    "path": getcwd(),
+                    "filename": data["name"],
+                    "link": data["link"]
+                }
+            )
+
+
+    def _download(self, url: str, password: str | None = None) -> None:
+        """
+        _download
+
+        Requests to start downloading files.
+
+        :param url: url of the content.
+        :param password: content's password.
+        :return:
+        """
+
+        try:
+            if not url.split("/")[-2] == "d":
+                die(f"The url probably doesn't have an id in it: {url}")
+
+            content_id: str = url.split("/")[-1]
+        except IndexError:
+            _print(f"{url} doesn't seem a valid url." + NEW_LINE)
+
+            return
+
+        content_dir: str = path.join(getcwd(), content_id)
+        password = sha256(password.encode()).hexdigest() if password else password
+
+        self._createDir(content_id)
+        chdir(content_id)
+
+        files_link_list: List[Dict] = []
+
+        self._parseLinks(content_id, files_link_list, password)
+        self._threadedDownloads(content_dir, files_link_list)
+
+
+    def _parseUrlOrFile(self, url_or_file: str, _password: str | None = None) -> None:
+        """
+        _parseUrlOrFile
+
+        Parses a file or a url for possible links.
+
+        :param url_or_file: a filename with urls to be downloaded or a single url.
+        :param password: password to be used across all links, if not provided a per link password may be used.
+        :return:
+        """
+
+        if not (path.exists(url_or_file) and path.isfile(url_or_file)):
+            self._download(url_or_file, _password)
+
+            return
+
+        with open(url_or_file, "r") as f:
+            lines: List[str] = f.readlines()
+
+        for line in lines:
+            line_splitted: List[str] = line.split(" ")
+            url: str = line_splitted[0].strip()
+            password: str | None = _password if _password else line_splitted[1].strip() \
+                if len(line_splitted) > 1 else _password
+
+            self._download(url, password)
 
 
 if __name__ == '__main__':
@@ -320,7 +372,7 @@ if __name__ == '__main__':
 
             # Run
             _print('Starting, please wait...' + NEW_LINE)
-            Main(url=url, password=password, max_workers=3)
+            Main(url=url, password=password)
         else:
             die("Usage:"
                 + NEW_LINE
