@@ -270,7 +270,7 @@ class Main:
         response: Dict = get(url, headers=headers).json()
 
         if response["status"] != "ok":
-            _print(f"Failed to get a link as response from the {url}")
+            _print(f"Failed to get a link as response from the {url}." + NEW_LINE)
             return
 
         data: Dict = response["data"]
@@ -321,7 +321,7 @@ class Main:
 
         try:
             if not url.split("/")[-2] == "d":
-                _print(f"The url probably doesn't have an id in it: {url}")
+                _print(f"The url probably doesn't have an id in it: {url}." + NEW_LINE)
                 return
 
             content_id: str = url.split("/")[-1]
