@@ -59,6 +59,8 @@ class Main:
 
     def _threadedDownloads(self, content_dir: str, files_link_list: List[Dict]) -> None:
         """
+        _threadedDownloads
+
         Parallelize the downloads.
 
         "param content_dir": cotent directory.
@@ -77,6 +79,8 @@ class Main:
 
     def _createDir(self, dirname: str) -> None:
         """
+        _createDir
+
         creates a directory where the files will be saved if doesn't exist and change to it.
 
         :param dirname: name of the directory to be created.
@@ -96,6 +100,8 @@ class Main:
     @staticmethod
     def _getToken() -> str:
         """
+        _getToken
+
         Gets the access token of account created.
 
         :return: The access token of an account. Or exit if account creation fail.
@@ -119,7 +125,9 @@ class Main:
     @staticmethod
     def _downloadContent(file_info: Dict, token: str, chunk_size: int = 4096) -> None:
         """
-        Download a file.
+        _downloadContent
+
+        Requests the contents of the file and writes it.
 
         :param file_info: a dictionary with information about a file to be downloaded.
         :param token: the access token of the account.
@@ -236,6 +244,8 @@ class Main:
         password: str | None = None
     ) -> None:
         """
+        _parseLinks
+
         Parses for possible links recursively and populate a list with file's info.
 
         :param _id: url to the content.
