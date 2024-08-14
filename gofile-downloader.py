@@ -221,8 +221,10 @@ class Main:
         finally:
             if path.getsize(tmp_file) == int(has_size):
                 _print("\r" + " " * len(message))
-                _print(f"\rDownloading {file_info['filename']}: {path.getsize(tmp_file)} of {has_size} Done!" + NEW_LINE)
-                message = " "
+                _print(f"\rDownloading {file_info['filename']}: "
+                    + f"{path.getsize(tmp_file)} of {has_size} Done!"
+                    + NEW_LINE
+                )
 
                 move(tmp_file, filepath)
 
@@ -319,14 +321,12 @@ class Main:
             return
 
         content_dir: str = path.join(getcwd(), content_id)
-        password = sha256(password.encode()).hexdigest() if password else password
+        _password: str | None = sha256(password.encode()).hexdigest() if password else password
+        files_link_list: List[Dict] = []
 
         self._createDir(content_id)
         chdir(content_id)
-
-        files_link_list: List[Dict] = []
-
-        self._parseLinks(content_id, files_link_list, password)
+        self._parseLinks(content_id, files_link_list, _password)
         self._threadedDownloads(content_dir, files_link_list)
 
 
