@@ -3,7 +3,7 @@
 
 from os import chdir, getcwd, getenv, listdir, mkdir, path, rmdir
 from sys import exit, stdout, stderr
-from typing import Dict, List, TextIO
+from typing import Any, TextIO
 from requests import get, post
 from concurrent.futures import ThreadPoolExecutor
 from platform import system
@@ -58,7 +58,7 @@ class Main:
         self._parseUrlOrFile(url, password)
 
 
-    def _threadedDownloads(self, content_dir: str, files_link_list: List[Dict]) -> None:
+    def _threadedDownloads(self, content_dir: str, files_link_list: list[dict[str, str]]) -> None:
         """
         _threadedDownloads
 
@@ -108,14 +108,15 @@ class Main:
         :return: The access token of an account. Or exit if account creation fail.
         """
 
-        headers: Dict = {
-            "User-Agent": getenv("GF_USERAGENT") if getenv("GF_USERAGENT") else "Mozilla/5.0",
+        user_agent: str | None = getenv("GF_USERAGENT")
+        headers: dict[str, str] = {
+            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
         }
 
-        create_account_response: Dict = post("https://api.gofile.io/accounts", headers=headers).json()
+        create_account_response: dict[Any, Any] = post("https://api.gofile.io/accounts", headers=headers).json()
 
         if create_account_response["status"] != "ok":
             die("Account creation failed!")
@@ -124,7 +125,7 @@ class Main:
 
 
     @staticmethod
-    def _downloadContent(file_info: Dict, token: str, chunk_size: int = 4096) -> None:
+    def _downloadContent(file_info: dict[str, str], token: str, chunk_size: int = 4096) -> None:
         """
         _downloadContent
 
@@ -145,11 +146,12 @@ class Main:
 
         tmp_file: str =  filepath + '.part'
         url: str = file_info["link"]
+        user_agent: str | None = getenv("GF_USERAGENT")
 
-        headers: Dict = {
+        headers: dict[str, str] = {
             "Cookie": "accountToken=" + token,
             "Accept-Encoding": "gzip, deflate, br",
-            "User-Agent": getenv("GF_USERAGENT") if getenv("GF_USERAGENT") else "Mozilla/5.0",
+            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept": "*/*",
             "Referer": url + ("/" if not url.endswith("/") else ""),
             "Origin": url,
@@ -241,7 +243,7 @@ class Main:
     def _parseLinks(
         self,
         _id: str,
-        files_link_list: List[Dict],
+        files_link_list: list[dict[str, str]],
         password: str | None = None
     ) -> None:
         """
@@ -260,21 +262,23 @@ class Main:
         if password:
             url = url + f"&password={password}"
 
-        headers: Dict = {
-            "User-Agent": getenv("GF_USERAGENT") if getenv("GF_USERAGENT") else "Mozilla/5.0",
+        user_agent: str | None = getenv("GF_USERAGENT")
+
+        headers: dict[str, str] = {
+            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
             "Authorization": "Bearer" + " " + self._token,
         }
 
-        response: Dict = get(url, headers=headers).json()
+        response: dict[Any, Any] = get(url, headers=headers).json()
 
         if response["status"] != "ok":
             _print(f"Failed to get a link as response from the {url}." + NEW_LINE)
             return
 
-        data: Dict = response["data"]
+        data: dict[Any, Any] = response["data"]
 
         if "password" in data and "passwordStatus" in data and data["passwordStatus"] != "passwordOk":
             _print("Password protected link. Please provide the password." + NEW_LINE)
@@ -285,7 +289,7 @@ class Main:
             chdir(data["name"])
 
             for child_id in data["children"]:
-                child: Dict = data["children"][child_id]
+                child: dict[Any, Any] = data["children"][child_id]
 
                 if child["type"] == "folder":
                     self._parseLinks(child["id"],files_link_list, password)
@@ -332,7 +336,7 @@ class Main:
 
         content_dir: str = path.join(self._root_dir, content_id)
         _password: str | None = sha256(password.encode()).hexdigest() if password else password
-        files_link_list: List[Dict] = []
+        files_link_list: list[dict[str, str]] = []
 
         self._createDir(content_dir)
         chdir(content_id)
@@ -362,10 +366,10 @@ class Main:
             return
 
         with open(url_or_file, "r") as f:
-            lines: List[str] = f.readlines()
+            lines: list[str] = f.readlines()
 
         for line in lines:
-            line_splitted: List[str] = line.split(" ")
+            line_splitted: list[str] = line.split(" ")
             url: str = line_splitted[0].strip()
             password: str | None = _password if _password else line_splitted[1].strip() \
                 if len(line_splitted) > 1 else _password
