@@ -6,6 +6,7 @@ from sys import exit, stdout, stderr
 from typing import Any, TextIO
 from requests import get, post
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from platform import system
 from hashlib import sha256
 from shutil import move
@@ -37,7 +38,7 @@ def die(msg: str) -> None:
     :return:
     """
 
-    _print(msg + NEW_LINE, True)
+    _print(f"{msg}{NEW_LINE}", True)
     exit(-1)
 
 
@@ -50,6 +51,8 @@ class Main:
         if root_dir and path.exists(root_dir):
             chdir(root_dir)
 
+        self._lock: Lock = Lock()
+        self._message: str = " "
         self._root_dir: str = root_dir if root_dir else getcwd()
         self._max_workers: int = max_workers
         token: str | None = getenv("GF_TOKEN")
@@ -73,7 +76,7 @@ class Main:
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for item in files_link_list:
-                executor.submit(self._downloadContent, item, self._token, 16384)
+                executor.submit(self._downloadContent, item)
 
         chdir(self._root_dir)
 
@@ -124,15 +127,13 @@ class Main:
         return create_account_response["data"]["token"]
 
 
-    @staticmethod
-    def _downloadContent(file_info: dict[str, str], token: str, chunk_size: int = 4096) -> None:
+    def _downloadContent(self, file_info: dict[str, str], chunk_size: int = 16384) -> None:
         """
         _downloadContent
 
         Requests the contents of the file and writes it.
 
         :param file_info: a dictionary with information about a file to be downloaded.
-        :param token: the access token of the account.
         :param chunk_size: the number of bytes it should read into memory.
         :return:
         """
@@ -140,20 +141,20 @@ class Main:
         filepath: str = path.join(file_info["path"], file_info["filename"])
         if path.exists(filepath):
             if path.getsize(filepath) > 0:
-                _print(f"{filepath} already exist, skipping." + NEW_LINE)
+                _print(f"{filepath} already exist, skipping.{NEW_LINE}")
 
                 return
 
-        tmp_file: str =  filepath + '.part'
+        tmp_file: str =  f"{filepath}.part"
         url: str = file_info["link"]
         user_agent: str | None = getenv("GF_USERAGENT")
 
         headers: dict[str, str] = {
-            "Cookie": "accountToken=" + token,
+            "Cookie": f"accountToken={self._token}",
             "Accept-Encoding": "gzip, deflate, br",
             "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept": "*/*",
-            "Referer": url + ("/" if not url.endswith("/") else ""),
+            "Referer": f"{url}{("/" if not url.endswith("/") else "")}",
             "Origin": url,
             "Connection": "keep-alive",
             "Sec-Fetch-Dest": "empty",
@@ -170,32 +171,34 @@ class Main:
             headers["Range"] = f"bytes={part_size}-"
 
         has_size: str | None = None
-        message: str = " "
+        status_code: int | None = None
 
         try:
             with get(url, headers=headers, stream=True, timeout=(9, 27)) as response_handler:
+                status_code = response_handler.status_code
+
                 if ((response_handler.status_code in (403, 404, 405, 500)) or
                     (part_size == 0 and response_handler.status_code != 200) or
                     (part_size > 0 and response_handler.status_code != 206)):
                     _print(
                         f"Couldn't download the file from {url}."
-                        + NEW_LINE
-                        + f"Status code: {response_handler.status_code}"
-                        + NEW_LINE
+                        f"{NEW_LINE}"
+                        f"Status code: {status_code}"
+                        f"{NEW_LINE}"
                     )
 
                     return
 
-                has_size = response_handler.headers.get('Content-Length') \
-                    if part_size == 0 \
-                    else response_handler.headers.get('Content-Range').split("/")[-1]
+                content_lenth: str | None = response_handler.headers.get('Content-Length')
+                has_size = content_lenth if part_size == 0 \
+                    else content_lenth.split("/")[-1] if content_lenth else None
 
                 if not has_size:
                     _print(
                         f"Couldn't find the file size from {url}."
-                        + NEW_LINE
-                        + f"Status code: {response_handler.status_code}"
-                        +NEW_LINE
+                        f"{NEW_LINE}"
+                        f"Status code: {status_code}"
+                        f"{NEW_LINE}"
                     )
 
                     return
@@ -223,21 +226,23 @@ class Main:
                             rate /= (1024 * 1024 * 1024)
                             unit = "GB/s"
 
-                        _print("\r" + " " * len(message))
+                        # thread safe update the self._message, so no output interleaves
+                        with self._lock:
+                            _print(f"\r{" " * len(self._message)}")
 
-                        message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
-                        f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
+                            self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
+                            f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
 
-                        _print(message)
+                            _print(self._message)
         finally:
-            if path.getsize(tmp_file) == int(has_size):
-                _print("\r" + " " * len(message))
-                _print(f"\rDownloading {file_info['filename']}: "
-                    + f"{path.getsize(tmp_file)} of {has_size} Done!"
-                    + NEW_LINE
-                )
-
-                move(tmp_file, filepath)
+            with self._lock:
+                if has_size and path.getsize(tmp_file) == int(has_size):
+                    _print(f"\r{" " * len(self._message)}")
+                    _print(f"\rDownloading {file_info['filename']}: "
+                        f"{path.getsize(tmp_file)} of {has_size} Done!"
+                        f"{NEW_LINE}"
+                    )
+                    move(tmp_file, filepath)
 
 
     def _parseLinks(
@@ -260,7 +265,7 @@ class Main:
         url: str = f"https://api.gofile.io/contents/{_id}?wt=4fd6sg89d7s6&cache=true"
 
         if password:
-            url = url + f"&password={password}"
+            url = f"{url}&password={password}"
 
         user_agent: str | None = getenv("GF_USERAGENT")
 
@@ -269,19 +274,19 @@ class Main:
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
-            "Authorization": "Bearer" + " " + self._token,
+            "Authorization": f"Bearer {self._token}",
         }
 
         response: dict[Any, Any] = get(url, headers=headers).json()
 
         if response["status"] != "ok":
-            _print(f"Failed to get a link as response from the {url}." + NEW_LINE)
+            _print(f"Failed to get a link as response from the {url}.{NEW_LINE}")
             return
 
         data: dict[Any, Any] = response["data"]
 
         if "password" in data and "passwordStatus" in data and data["passwordStatus"] != "passwordOk":
-            _print("Password protected link. Please provide the password." + NEW_LINE)
+            _print(f"Password protected link. Please provide the password.{NEW_LINE}")
             return
 
         if data["type"] == "folder":
@@ -326,12 +331,12 @@ class Main:
 
         try:
             if not url.split("/")[-2] == "d":
-                _print(f"The url probably doesn't have an id in it: {url}." + NEW_LINE)
+                _print(f"The url probably doesn't have an id in it: {url}.{NEW_LINE}")
                 return
 
             content_id: str = url.split("/")[-1]
         except IndexError:
-            _print(f"{url} doesn't seem a valid url." + NEW_LINE)
+            _print(f"{url} doesn't seem a valid url.{NEW_LINE}")
             return
 
         content_dir: str = path.join(self._root_dir, content_id)
@@ -392,14 +397,14 @@ if __name__ == '__main__':
                 password = argv[2]
 
             # Run
-            _print('Starting, please wait...' + NEW_LINE)
+            _print(f"Starting, please wait...{NEW_LINE}")
             Main(url=url, password=password)
         else:
-            die("Usage:"
-                + NEW_LINE
-                + "python gofile-downloader.py https://gofile.io/d/contentid"
-                + NEW_LINE
-                + "python gofile-downloader.py https://gofile.io/d/contentid password"
+            die(f"Usage:"
+                f"{NEW_LINE}"
+                f"python gofile-downloader.py https://gofile.io/d/contentid"
+                f"{NEW_LINE}"
+                f"python gofile-downloader.py https://gofile.io/d/contentid password"
             )
     except KeyboardInterrupt:
         exit(1)
