@@ -52,39 +52,43 @@ class Main:
             chdir(root_dir)
 
         self._lock: Lock = Lock()
-        self._message: str = " "
-        self._content_dir: str | None = None
-        self._root_dir: str = root_dir if root_dir else getcwd()
         self._max_workers: int = max_workers
         token: str | None = getenv("GF_TOKEN")
+        self._message: str = " "
+        self._content_dir: str | None = None
+
+        # Keeps track of the number of recursion to get to the file
+        self._recursive_files_index: int = 0
+
+        # Dictionary to hold information about file and its directories structure
+        # {"index": {"path": "", "filename": "", "link": ""}}
+        # where the largest index is the top most file
+        self._files_info: dict[str, dict[str, str]] = {}
+
+        self._root_dir: str = root_dir if root_dir else getcwd()
         self._token: str = token if token else self._getToken()
 
         self._parseUrlOrFile(url, password)
 
 
-    def _threadedDownloads(self, files_link_list: list[dict[str, str]]) -> None:
+    def _threadedDownloads(self) -> None:
         """
         _threadedDownloads
 
         Parallelize the downloads.
 
-        :param files_link_list: list of files in the format {"path": "", "filename": "", "link": ""}
         :return:
         """
 
-        # Gofile seems to always create at least one top directory,
-        # this should already be set at this point
         if not self._content_dir:
-            _print("Content directory wasn't created, exit...{NEW_LINE}")
+            _print(f"Content directory wasn't created, nothing done.{NEW_LINE}")
             return
 
         chdir(self._content_dir)
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
-            for item in files_link_list:
+            for item in self._files_info.values():
                 executor.submit(self._downloadContent, item)
-
-        self._content_dir = None
 
         chdir(self._root_dir)
 
@@ -197,7 +201,7 @@ class Main:
 
                     return
 
-                content_lenth: str | None = response_handler.headers.get('Content-Length')
+                content_lenth: str | None = response_handler.headers.get("Content-Length")
                 has_size = content_lenth if part_size == 0 \
                     else content_lenth.split("/")[-1] if content_lenth else None
 
@@ -211,7 +215,7 @@ class Main:
 
                     return
 
-                with open(tmp_file, 'ab') as handler:
+                with open(tmp_file, "ab") as handler:
                     total_size: float = float(has_size)
 
                     start_time: float = perf_counter()
@@ -238,7 +242,7 @@ class Main:
                         with self._lock:
                             _print(f"\r{" " * len(self._message)}")
 
-                            self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
+                            self._message = f"\rDownloading {file_info["filename"]}: {part_size + i * len(chunk)}" \
                             f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
 
                             _print(self._message)
@@ -246,26 +250,25 @@ class Main:
             with self._lock:
                 if has_size and path.getsize(tmp_file) == int(has_size):
                     _print(f"\r{" " * len(self._message)}")
-                    _print(f"\rDownloading {file_info['filename']}: "
+                    _print(f"\rDownloading {file_info["filename"]}: "
                         f"{path.getsize(tmp_file)} of {has_size} Done!"
                         f"{NEW_LINE}"
                     )
                     move(tmp_file, filepath)
 
 
-    def _parseLinks(
+    def _parseLinksRecursively(
         self,
         content_id: str,
-        files_link_list: list[dict[str, str]],
         password: str | None = None
     ) -> None:
         """
-        _parseLinks
+        _parseLinksRecursively
 
-        Parses for possible links recursively and populate a list with file's info.
+        Parses for possible links recursively and populate a list with file's info
+        while also creating directories and subdirectories.
 
         :param content_id: url to the content.
-        :param files_link_list: list of files that will be populated in the format {"path": "", "filename": "", "link": ""}
         :param password: content's password.
         :return:
         """
@@ -316,25 +319,26 @@ class Main:
                 child: dict[Any, Any] = data["children"][child_id]
 
                 if child["type"] == "folder":
-                    self._parseLinks(child["id"],files_link_list, password)
+                    self._parseLinksRecursively(child["id"], password)
                 else:
-                    files_link_list.append(
-                        {
-                            "path": getcwd(),
-                            "filename": child["name"],
-                            "link": child["link"]
-                        }
-                    )
+                    self._recursive_files_index += 1
+
+                    self._files_info[str(self._recursive_files_index)] = {
+                        "path": getcwd(),
+                        "filename": child["name"],
+                        "link": child["link"]
+                    }
+
 
             chdir(path.pardir)
         else:
-            files_link_list.append(
-                {
-                    "path": getcwd(),
-                    "filename": data["name"],
-                    "link": data["link"]
-                }
-            )
+            self._recursive_files_index += 1
+
+            self._files_info[str(self._recursive_files_index)] = {
+                "path": getcwd(),
+                "filename": data["name"],
+                "link": data["link"]
+            }
 
 
     def _download(self, url: str, password: str | None = None) -> None:
@@ -359,16 +363,22 @@ class Main:
             return
 
         _password: str | None = sha256(password.encode()).hexdigest() if password else password
-        files_link_list: list[dict[str, str]] = []
 
-        self._parseLinks(content_id, files_link_list, _password)
+        self._parseLinksRecursively(content_id, _password)
 
-        # removes the root content directory if there's no file or subdirectory
-        if self._content_dir and not listdir(self._content_dir) and not files_link_list:
-            rmdir(self._content_dir)
+        # probably the link is broken so the content dir wasn't even created.
+        if not self._content_dir:
+            self._resetClassProperties()
             return
 
-        self._threadedDownloads(files_link_list)
+        # removes the root content directory if there's no file or subdirectory
+        if not listdir(self._content_dir) or not self._files_info:
+            rmdir(self._content_dir)
+            self._resetClassProperties()
+            return
+
+        self._threadedDownloads()
+        self._resetClassProperties()
 
 
     def _parseUrlOrFile(self, url_or_file: str, _password: str | None = None) -> None:
@@ -398,7 +408,23 @@ class Main:
             self._download(url, password)
 
 
-if __name__ == '__main__':
+    def _resetClassProperties(self) -> None:
+        """
+        _resetClassProperties
+
+        Simply put the properties of the class to be used again for another link if necessary.
+        This should be called after all jobs related to a link is done.
+
+        :return:
+        """
+
+        self._message: str = " "
+        self._content_dir: str | None = None
+        self._recursive_files_index: int = 0
+        self._files_info.clear()
+
+
+if __name__ == "__main__":
     try:
         from sys import argv
 
