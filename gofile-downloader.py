@@ -53,6 +53,7 @@ class Main:
 
         self._lock: Lock = Lock()
         self._message: str = " "
+        self._content_dir: str | None = None
         self._root_dir: str = root_dir if root_dir else getcwd()
         self._max_workers: int = max_workers
         token: str | None = getenv("GF_TOKEN")
@@ -61,22 +62,29 @@ class Main:
         self._parseUrlOrFile(url, password)
 
 
-    def _threadedDownloads(self, content_dir: str, files_link_list: list[dict[str, str]]) -> None:
+    def _threadedDownloads(self, files_link_list: list[dict[str, str]]) -> None:
         """
         _threadedDownloads
 
         Parallelize the downloads.
 
-        "param content_dir": cotent directory.
         :param files_link_list: list of files in the format {"path": "", "filename": "", "link": ""}
         :return:
         """
 
-        chdir(content_dir)
+        # Gofile seems to always create at least one top directory,
+        # this should already be set at this point
+        if not self._content_dir:
+            _print("Content directory wasn't created, exit...{NEW_LINE}")
+            return
+
+        chdir(self._content_dir)
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for item in files_link_list:
                 executor.submit(self._downloadContent, item)
+
+        self._content_dir = None
 
         chdir(self._root_dir)
 
@@ -247,7 +255,7 @@ class Main:
 
     def _parseLinks(
         self,
-        _id: str,
+        content_id: str,
         files_link_list: list[dict[str, str]],
         password: str | None = None
     ) -> None:
@@ -256,13 +264,13 @@ class Main:
 
         Parses for possible links recursively and populate a list with file's info.
 
-        :param _id: url to the content.
+        :param content_id: url to the content.
         :param files_link_list: list of files that will be populated in the format {"path": "", "filename": "", "link": ""}
         :param password: content's password.
         :return:
         """
 
-        url: str = f"https://api.gofile.io/contents/{_id}?wt=4fd6sg89d7s6&cache=true"
+        url: str = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true"
 
         if password:
             url = f"{url}&password={password}"
@@ -289,9 +297,20 @@ class Main:
             _print(f"Password protected link. Please provide the password.{NEW_LINE}")
             return
 
+        # Do not use the default root directory created by gofile,
+        # the naming may clash if another url link decides to do the same.
+        if data["type"] == "folder" and data["name"] == "root" and data.get("isRoot"):
+            self._content_dir = path.join(self._root_dir, content_id)
+            self._createDir(self._content_dir)
+            chdir(self._content_dir)
+
         if data["type"] == "folder":
             self._createDir(data["name"])
             chdir(data["name"])
+
+            # If no root directory is found use the first directory as the content directory.
+            if not self._content_dir:
+                self._content_dir = path.join(self._root_dir, content_id)
 
             for child_id in data["children"]:
                 child: dict[Any, Any] = data["children"][child_id]
@@ -339,20 +358,17 @@ class Main:
             _print(f"{url} doesn't seem a valid url.{NEW_LINE}")
             return
 
-        content_dir: str = path.join(self._root_dir, content_id)
         _password: str | None = sha256(password.encode()).hexdigest() if password else password
         files_link_list: list[dict[str, str]] = []
 
-        self._createDir(content_dir)
-        chdir(content_id)
         self._parseLinks(content_id, files_link_list, _password)
 
         # removes the root content directory if there's no file or subdirectory
-        if not listdir(content_dir) and not files_link_list:
-            rmdir(content_dir)
+        if self._content_dir and not listdir(self._content_dir) and not files_link_list:
+            rmdir(self._content_dir)
             return
 
-        self._threadedDownloads(content_dir, files_link_list)
+        self._threadedDownloads(files_link_list)
 
 
     def _parseUrlOrFile(self, url_or_file: str, _password: str | None = None) -> None:
