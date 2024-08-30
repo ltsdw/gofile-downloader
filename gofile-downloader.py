@@ -166,7 +166,7 @@ class Main:
             "Accept-Encoding": "gzip, deflate, br",
             "User-Agent": user_agent if user_agent else "Mozilla/5.0",
             "Accept": "*/*",
-            "Referer": f"{url}{("/" if not url.endswith("/") else "")}",
+            "Referer": f"{url}{('/' if not url.endswith('/') else '')}",
             "Origin": url,
             "Connection": "keep-alive",
             "Sec-Fetch-Dest": "empty",
@@ -240,17 +240,17 @@ class Main:
 
                         # thread safe update the self._message, so no output interleaves
                         with self._lock:
-                            _print(f"\r{" " * len(self._message)}")
+                            _print(f"\r{' ' * len(self._message)}")
 
-                            self._message = f"\rDownloading {file_info["filename"]}: {part_size + i * len(chunk)}" \
+                            self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
                             f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
 
                             _print(self._message)
         finally:
             with self._lock:
                 if has_size and path.getsize(tmp_file) == int(has_size):
-                    _print(f"\r{" " * len(self._message)}")
-                    _print(f"\rDownloading {file_info["filename"]}: "
+                    _print(f"\r{' ' * len(self._message)}")
+                    _print(f"\rDownloading {file_info['filename']}: "
                         f"{path.getsize(tmp_file)} of {has_size} Done!"
                         f"{NEW_LINE}"
                     )
