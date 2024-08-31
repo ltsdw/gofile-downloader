@@ -340,6 +340,16 @@ class Main:
                 "link": data["link"]
             }
 
+    def _printListFiles(self) -> None:
+        """
+        _printListFiles
+
+        Helper function to display a list of all files for selection.
+
+        :return:
+        """        
+        width: int = max(len(self._files_info[k]["filename"]) for k in self._files_info)
+        for index in self._files_info: _print(f"[{index}] -> {self._files_info[index]["filename"].ljust(width)}{NEW_LINE}")
 
     def _download(self, url: str, password: str | None = None) -> None:
         """
@@ -376,6 +386,28 @@ class Main:
             rmdir(self._content_dir)
             self._resetClassProperties()
             return
+
+        interactive: bool | None = getenv("GF_INTERACTIVE") == "1"
+        if interactive:
+            self._printListFiles()
+            input_list: list[str] = input(
+                f"Files to download (Ex: 1 3 7 | or leave empty to download them all)"
+                f"{NEW_LINE}"
+                f":: "
+            ).split()            
+            input_list = list(set(input_list) & set(self._files_info.keys())) # ensure only valid index strings are stored
+
+            if not input_list:
+                _print(f"Nothing done.{NEW_LINE}")
+                rmdir(self._content_dir)
+                self._resetClassProperties()
+
+                return
+
+            keys_to_delete: list[str] = list(set(self._files_info.keys()) - set(input_list))
+
+            for key in keys_to_delete:
+                del self._files_info[key]       
 
         self._threadedDownloads()
         self._resetClassProperties()
