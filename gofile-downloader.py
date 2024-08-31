@@ -300,20 +300,22 @@ class Main:
             _print(f"Password protected link. Please provide the password.{NEW_LINE}")
             return
 
-        # Do not use the default root directory created by gofile,
-        # the naming may clash if another url link decides to do the same.
-        if data["type"] == "folder" and data["name"] == "root" and data.get("isRoot"):
-            self._content_dir = path.join(self._root_dir, content_id)
-            self._createDir(self._content_dir)
-            chdir(self._content_dir)
-
         if data["type"] == "folder":
+            # Do not use the default root directory named "root" created by gofile,
+            # the naming may clash if another url link uses the same "root" name.
+            # And if the root directory isn't named as the content id
+            # create such a directory before proceeding
+            if not self._content_dir and data["name"] != content_id:
+                self._content_dir = path.join(self._root_dir, content_id)
+
+                self._createDir(self._content_dir)
+                chdir(self._content_dir)
+            elif not self._content_dir and data["name"] == content_id:
+                self._content_dir = path.join(self._root_dir, content_id)
+                self._createDir(self._content_dir)
+
             self._createDir(data["name"])
             chdir(data["name"])
-
-            # If no root directory is found use the first directory as the content directory.
-            if not self._content_dir:
-                self._content_dir = path.join(self._root_dir, content_id)
 
             for child_id in data["children"]:
                 child: dict[Any, Any] = data["children"][child_id]
