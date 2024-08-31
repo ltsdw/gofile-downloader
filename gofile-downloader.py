@@ -370,11 +370,13 @@ class Main:
 
         # probably the link is broken so the content dir wasn't even created.
         if not self._content_dir:
+            _print(f"No content directory created for url: {url}, nothing done.{NEW_LINE}")
             self._resetClassProperties()
             return
 
         # removes the root content directory if there's no file or subdirectory
-        if not listdir(self._content_dir) or not self._files_info:
+        if not listdir(self._content_dir) and not self._files_info:
+            _print(f"Empty directory for url: {url}, nothing done.{NEW_LINE}")
             rmdir(self._content_dir)
             self._resetClassProperties()
             return
