@@ -65,3 +65,9 @@ Use the environment variable **`GF_TOKEN`** to specify a specific account token:
 GF_TOKEN="account_token string" python gofile-downloader.py https://gofile.io/d/contentid
 
 ```
+
+Use the environment variable **`GF_INTERACTIVE`** to toggle manual file selection to download:
+```
+GF_INTERACTIVE="1" python gofile-downloader.py https://gofile.io/d/contentid
+
+```
