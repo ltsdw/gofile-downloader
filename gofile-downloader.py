@@ -353,7 +353,7 @@ class Main:
         """
 
         width: int = max(len(self._files_info[k]["filename"]) for k in self._files_info)
-        for index in self._files_info: _print(f"[{index}] -> {self._files_info[index]["filename"].ljust(width)}{NEW_LINE}")
+        for index in self._files_info: _print(f"[{index}] -> {self._files_info[index]['filename'].ljust(width)}{NEW_LINE}")
 
 
     def _download(self, url: str, password: str | None = None) -> None:
