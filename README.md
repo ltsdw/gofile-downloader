@@ -80,6 +80,8 @@ path must exist already):
 | **Windows Powershell** | `set GF_DOWNLOADDIR="C:\path\to\the\directory" && python gofile-downloader.py <url>` |
 | **Unix Shell** | `GF_DOWNLOADDIR="/path/to/the/directory" python gofile-downloader.py <url>`          |
 
+</br>
+
 Use the environment variable **`GF_USERAGENT`** to specify browser user agent (defaults Mozilla/5.0):
 
 | Platform | Command |
@@ -87,12 +89,16 @@ Use the environment variable **`GF_USERAGENT`** to specify browser user agent (d
 | **Windows Powershell** | `set GF_USERAGENT="user agent string" && python gofile-downloader.py <url>` |
 | **Unix Shell**         | `GF_USERAGENT="user agent string" python gofile-downloader.py <url>` |
 
+</br>
+
 Use the environment variable **`GF_TOKEN`** to specify a specific account token:
 
 | Platform | Command |
 | :---: | :---: |
 | **Windows Powershell** | `set GF_TOKEN="account_token string" && python gofile-downloader.py <url>` |
 | **Unix Shell**         | `GF_TOKEN="account_token string" python gofile-downloader.py <url>` |
+
+</br>
 
 Use the environment variable **`GF_INTERACTIVE`** to toggle manual file selection to download:
 
