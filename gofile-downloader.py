@@ -352,8 +352,22 @@ class Main:
         :return:
         """
 
-        width: int = max(len(self._files_info[k]["filename"]) for k in self._files_info)
-        for index in self._files_info: _print(f"[{index}] -> {self._files_info[index]['filename'].ljust(width)}{NEW_LINE}")
+        MAX_FILENAME_CHARACTERS: int = 100
+        width: int = max(len(f"[{v}] -> ") for v in self._files_info.keys())
+
+        for (k, v) in self._files_info.items():
+            # Trim the filepath if it's too long
+            filepath: str = path.join(v["path"], v["filename"])
+            filepath = f"...{filepath[-MAX_FILENAME_CHARACTERS:]}" \
+                if len(filepath) > MAX_FILENAME_CHARACTERS \
+                else filepath
+
+            text: str =  f"{f'[{k}] -> '.ljust(width)}{filepath}"
+
+            _print(f"{text}{NEW_LINE}"
+                   f"{'-' * len(text)}"
+                   f"{NEW_LINE}"
+            )
 
 
     def _download(self, url: str, password: str | None = None) -> None:
@@ -394,7 +408,7 @@ class Main:
             self._resetClassProperties()
             return
 
-        interactive: bool | None = getenv("GF_INTERACTIVE") == "1"
+        interactive: bool = getenv("GF_INTERACTIVE") == "1"
 
         if interactive:
             self._printListFiles()
