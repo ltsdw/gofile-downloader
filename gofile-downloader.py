@@ -3,7 +3,7 @@
 
 from os import chdir, getcwd, getenv, listdir, mkdir, path, rmdir
 from sys import exit, stdout, stderr
-from typing import Any, TextIO
+from typing import Any, NoReturn, TextIO
 from requests import get, post
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
@@ -30,7 +30,7 @@ def _print(msg: str, error: bool = False) -> None:
     output.flush()
 
 
-def die(msg: str) -> None:
+def die(msg: str) -> NoReturn:
     """
     Display a message of error and exit.
 
