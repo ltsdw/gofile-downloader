@@ -18,6 +18,8 @@ NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
 
 def _print(msg: str, error: bool = False) -> None:
     """
+    _print
+
     Print a message.
 
     :param msg: a string to be printed.
@@ -32,6 +34,8 @@ def _print(msg: str, error: bool = False) -> None:
 
 def die(msg: str) -> NoReturn:
     """
+    die
+
     Display a message of error and exit.
 
     :param msg: a string to be printed.
@@ -66,14 +70,14 @@ class Main:
         self._files_info: dict[str, dict[str, str]] = {}
 
         self._root_dir: str = root_dir if root_dir else getcwd()
-        self._token: str = token if token else self._getToken()
+        self._token: str = token if token else self._get_token()
 
-        self._parseUrlOrFile(url, password)
+        self._parse_url_or_file(url, password)
 
 
-    def _threadedDownloads(self) -> None:
+    def _threaded_downloads(self) -> None:
         """
-        _threadedDownloads
+        _threaded_downloads
 
         Parallelize the downloads.
 
@@ -88,14 +92,14 @@ class Main:
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for item in self._files_info.values():
-                executor.submit(self._downloadContent, item)
+                executor.submit(self._download_content, item)
 
         chdir(self._root_dir)
 
 
-    def _createDir(self, dirname: str) -> None:
+    def _create_dir(self, dirname: str) -> None:
         """
-        _createDir
+        _create_dir
 
         creates a directory where the files will be saved if doesn't exist and change to it.
 
@@ -114,9 +118,9 @@ class Main:
 
 
     @staticmethod
-    def _getToken() -> str:
+    def _get_token() -> str:
         """
-        _getToken
+        _get_token
 
         Gets the access token of account created.
 
@@ -139,9 +143,9 @@ class Main:
         return create_account_response["data"]["token"]
 
 
-    def _downloadContent(self, file_info: dict[str, str], chunk_size: int = 16384) -> None:
+    def _download_content(self, file_info: dict[str, str], chunk_size: int = 16384) -> None:
         """
-        _downloadContent
+        _download_content
 
         Requests the contents of the file and writes it.
 
@@ -257,13 +261,13 @@ class Main:
                     move(tmp_file, filepath)
 
 
-    def _parseLinksRecursively(
+    def _parse_links_recursively(
         self,
         content_id: str,
         password: str | None = None
     ) -> None:
         """
-        _parseLinksRecursively
+        _parse_links_recursively
 
         Parses for possible links recursively and populate a list with file's info
         while also creating directories and subdirectories.
@@ -308,20 +312,20 @@ class Main:
             if not self._content_dir and data["name"] != content_id:
                 self._content_dir = path.join(self._root_dir, content_id)
 
-                self._createDir(self._content_dir)
+                self._create_dir(self._content_dir)
                 chdir(self._content_dir)
             elif not self._content_dir and data["name"] == content_id:
                 self._content_dir = path.join(self._root_dir, content_id)
-                self._createDir(self._content_dir)
+                self._create_dir(self._content_dir)
 
-            self._createDir(data["name"])
+            self._create_dir(data["name"])
             chdir(data["name"])
 
             for child_id in data["children"]:
                 child: dict[Any, Any] = data["children"][child_id]
 
                 if child["type"] == "folder":
-                    self._parseLinksRecursively(child["id"], password)
+                    self._parse_links_recursively(child["id"], password)
                 else:
                     self._recursive_files_index += 1
 
@@ -343,9 +347,9 @@ class Main:
             }
 
 
-    def _printListFiles(self) -> None:
+    def _print_list_files(self) -> None:
         """
-        _printListFiles
+        _print_list_files
 
         Helper function to display a list of all files for selection.
 
@@ -393,25 +397,25 @@ class Main:
 
         _password: str | None = sha256(password.encode()).hexdigest() if password else password
 
-        self._parseLinksRecursively(content_id, _password)
+        self._parse_links_recursively(content_id, _password)
 
         # probably the link is broken so the content dir wasn't even created.
         if not self._content_dir:
             _print(f"No content directory created for url: {url}, nothing done.{NEW_LINE}")
-            self._resetClassProperties()
+            self._reset_class_properties()
             return
 
         # removes the root content directory if there's no file or subdirectory
         if not listdir(self._content_dir) and not self._files_info:
             _print(f"Empty directory for url: {url}, nothing done.{NEW_LINE}")
             rmdir(self._content_dir)
-            self._resetClassProperties()
+            self._reset_class_properties()
             return
 
         interactive: bool = getenv("GF_INTERACTIVE") == "1"
 
         if interactive:
-            self._printListFiles()
+            self._print_list_files()
 
             input_list: list[str] = input(
                 f"Files to download (Ex: 1 3 7 | or leave empty to download them all)"
@@ -423,7 +427,7 @@ class Main:
             if not input_list:
                 _print(f"Nothing done.{NEW_LINE}")
                 rmdir(self._content_dir)
-                self._resetClassProperties()
+                self._reset_class_properties()
                 return
 
             keys_to_delete: list[str] = list(set(self._files_info.keys()) - set(input_list))
@@ -431,13 +435,13 @@ class Main:
             for key in keys_to_delete:
                 del self._files_info[key]
 
-        self._threadedDownloads()
-        self._resetClassProperties()
+        self._threaded_downloads()
+        self._reset_class_properties()
 
 
-    def _parseUrlOrFile(self, url_or_file: str, _password: str | None = None) -> None:
+    def _parse_url_or_file(self, url_or_file: str, _password: str | None = None) -> None:
         """
-        _parseUrlOrFile
+        _parse_url_or_file
 
         Parses a file or a url for possible links.
 
@@ -462,9 +466,9 @@ class Main:
             self._download(url, password)
 
 
-    def _resetClassProperties(self) -> None:
+    def _reset_class_properties(self) -> None:
         """
-        _resetClassProperties
+        _reset_class_properties
 
         Simply put the properties of the class to be used again for another link if necessary.
         This should be called after all jobs related to a link is done.
