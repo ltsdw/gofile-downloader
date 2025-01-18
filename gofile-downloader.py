@@ -61,9 +61,6 @@ class Main:
         self._message: str = " "
         self._content_dir: str | None = None
 
-        # Keeps track of the number of recursion to get to the file
-        self._recursive_files_index: int = 0
-
         # Dictionary to hold information about file and its directories structure
         # {"index": {"path": "", "filename": "", "link": ""}}
         # where the largest index is the top most file
@@ -107,11 +104,8 @@ class Main:
         :return:
         """
 
-        current_dir: str = getcwd()
-        filepath: str = path.join(current_dir, dirname)
-
         try:
-            mkdir(path.join(filepath))
+            mkdir(dirname)
         # if the directory already exist is safe to do nothing
         except FileExistsError:
             pass
@@ -264,7 +258,9 @@ class Main:
     def _parse_links_recursively(
         self,
         content_id: str,
-        password: str | None = None
+        password: str | None = None,
+        pathing_count: dict[str, int] = {},
+        recursive_files_index: dict[str, int] = {"index": 0}
     ) -> None:
         """
         _parse_links_recursively
@@ -274,10 +270,14 @@ class Main:
 
         :param content_id: url to the content.
         :param password: content's password.
+        :param pathing_count: pointer-like object for keeping track of naming collision of pathing (filepaths and
+                              directories) should only be internally used by this function to keep object state track.
+        :param recursive_files_index: pointer-like object for keeping track of files indeces,
+                                      should only be internally used by this function toakeep object state track.
         :return:
         """
 
-        url: str = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true"
+        url: str = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true&sortField=createTime&sortDirection=1"
 
         if password:
             url = f"{url}&password={password}"
@@ -304,47 +304,87 @@ class Main:
             _print(f"Password protected link. Please provide the password.{NEW_LINE}")
             return
 
-        if data["type"] == "folder":
-            # Do not use the default root directory named "root" created by gofile,
-            # the naming may clash if another url link uses the same "root" name.
-            # And if the root directory isn't named as the content id
-            # create such a directory before proceeding
-            if not self._content_dir and data["name"] != content_id:
-                self._content_dir = path.join(self._root_dir, content_id)
+        if data["type"] != "folder":
+            current_dir: str = getcwd()
+            filename: str = data["name"]
+            recursive_files_index["index"] += 1
+            filepath: str = path.join(current_dir, filename)
 
-                self._create_dir(self._content_dir)
-                chdir(self._content_dir)
-            elif not self._content_dir and data["name"] == content_id:
-                self._content_dir = path.join(self._root_dir, content_id)
-                self._create_dir(self._content_dir)
+            if filepath in pathing_count:
+                pathing_count[filepath] += 1
+            else:
+                pathing_count[filepath] = 0
 
-            self._create_dir(data["name"])
-            chdir(data["name"])
+            if pathing_count and pathing_count[filepath] > 0:
+                extension: str
+                filename, extension = path.splitext(filename)
+                filename = f"{filename}({pathing_count[filepath]}){extension}"
 
-            for child_id in data["children"]:
-                child: dict[Any, Any] = data["children"][child_id]
-
-                if child["type"] == "folder":
-                    self._parse_links_recursively(child["id"], password)
-                else:
-                    self._recursive_files_index += 1
-
-                    self._files_info[str(self._recursive_files_index)] = {
-                        "path": getcwd(),
-                        "filename": child["name"],
-                        "link": child["link"]
-                    }
-
-
-            chdir(path.pardir)
-        else:
-            self._recursive_files_index += 1
-
-            self._files_info[str(self._recursive_files_index)] = {
-                "path": getcwd(),
-                "filename": data["name"],
+            self._files_info[str(recursive_files_index["index"])] = {
+                "path": current_dir,
+                "filename": filename,
                 "link": data["link"]
             }
+
+            return
+
+        # Do not use the default root directory named "root" created by gofile,
+        # the naming may clash if another url link uses the same "root" name.
+        # And if the root directory isn't named as the content id
+        # create such a directory before proceeding
+        folder_name: str = data["name"]
+
+        if not self._content_dir and folder_name != content_id:
+            self._content_dir = path.join(self._root_dir, content_id)
+
+            self._create_dir(self._content_dir)
+            chdir(self._content_dir)
+        elif not self._content_dir and folder_name == content_id:
+            self._content_dir = path.join(self._root_dir, content_id)
+            self._create_dir(self._content_dir)
+
+        # Only create subdirectories after the content directory is already created
+        absolute_path: str = path.join(getcwd(), folder_name)
+
+        if absolute_path in pathing_count:
+            pathing_count[absolute_path] += 1
+        else:
+            pathing_count[absolute_path] = 0
+
+        if pathing_count and pathing_count[absolute_path] > 0:
+            absolute_path = f"{absolute_path}({pathing_count[absolute_path]})"
+
+        self._create_dir(absolute_path)
+        chdir(absolute_path)
+
+        for child_id in data["children"]:
+            child: dict[Any, Any] = data["children"][child_id]
+
+            if child["type"] == "folder":
+                self._parse_links_recursively(child["id"], password, pathing_count, recursive_files_index)
+            else:
+                current_dir: str = getcwd()
+                filename: str = child["name"]
+                recursive_files_index["index"] += 1
+                filepath: str = path.join(current_dir, filename)
+
+                if filepath in pathing_count:
+                    pathing_count[filepath] += 1
+                else:
+                    pathing_count[filepath] = 0
+
+                if pathing_count and pathing_count[filepath] > 0:
+                    extension: str
+                    filename, extension = path.splitext(filename)
+                    filename = f"{filename}({pathing_count[filepath]}){extension}"
+
+                self._files_info[str(recursive_files_index["index"])] = {
+                    "path": current_dir,
+                    "filename": filename,
+                    "link": child["link"]
+                }
+
+        chdir(path.pardir)
 
 
     def _print_list_files(self) -> None:
@@ -478,7 +518,6 @@ class Main:
 
         self._message: str = " "
         self._content_dir: str | None = None
-        self._recursive_files_index: int = 0
         self._files_info.clear()
 
 
