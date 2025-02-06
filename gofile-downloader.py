@@ -199,9 +199,10 @@ class Main:
 
                     return
 
-                content_lenth: str | None = response_handler.headers.get("Content-Length")
-                has_size = content_lenth if part_size == 0 \
-                    else content_lenth.split("/")[-1] if content_lenth else None
+                content_length: str | None = response_handler.headers.get("Content-Length")
+                content_range: str | None = response_handler.headers.get("Content-Range")
+                has_size = content_length if part_size == 0 \
+                    else content_range.split("/")[-1] if content_range else None
 
                 if not has_size:
                     _print(
