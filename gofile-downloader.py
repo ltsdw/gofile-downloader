@@ -11,7 +11,7 @@ from platform import system
 from hashlib import sha256
 from shutil import move
 from time import perf_counter
-
+import rich.progress
 
 NEW_LINE: str = "\n" if system() != "Windows" else "\r\n"
 
@@ -60,6 +60,13 @@ class Main:
         token: str | None = getenv("GF_TOKEN")
         self._message: str = " "
         self._content_dir: str | None = None
+        self.bar = rich.progress.Progress(
+            *rich.progress.Progress.get_default_columns(),
+            rich.progress.TimeElapsedColumn(),
+            rich.progress.TotalFileSizeColumn(),
+            rich.progress.TransferSpeedColumn()
+        )
+        self.bar.start()
 
         # Dictionary to hold information about file and its directories structure
         # {"index": {"path": "", "filename": "", "link": ""}}
@@ -216,35 +223,15 @@ class Main:
 
                 with open(tmp_file, "ab") as handler:
                     total_size: float = float(has_size)
-
-                    start_time: float = perf_counter()
+                    task = self.bar.add_task(file_info["filename"], total = total_size)
+                    
                     for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
-                        progress: float = (part_size + (i * len(chunk))) / total_size * 100
-
                         handler.write(chunk)
+                        self.bar.advance(task, len(chunk))
+                
+                self.bar.update(task, completed=True, visible=False, refresh=True)
+                self.bar.remove_task(task)
 
-                        rate: float = (i * len(chunk)) / (perf_counter()-start_time)
-                        unit: str = "B/s"
-                        if rate < (1024):
-                            unit = "B/s"
-                        elif rate < (1024*1024):
-                            rate /= 1024
-                            unit = "KB/s"
-                        elif rate < (1024*1024*1024):
-                            rate /= (1024 * 1024)
-                            unit = "MB/s"
-                        elif rate < (1024*1024*1024*1024):
-                            rate /= (1024 * 1024 * 1024)
-                            unit = "GB/s"
-
-                        # thread safe update the self._message, so no output interleaves
-                        with self._lock:
-                            _print(f"\r{' ' * len(self._message)}")
-
-                            self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
-                            f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
-
-                            _print(self._message)
         finally:
             with self._lock:
                 if has_size and path.getsize(tmp_file) == int(has_size):
