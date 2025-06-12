@@ -106,3 +106,12 @@ Use the environment variable **`GF_INTERACTIVE`** to toggle manual file selectio
 | :---: | :---: |
 | **Windows Powershell** | `set GF_INTERACTIVE="1" && python gofile-downloader.py <url>` |
 | **Unix Shell**         | `GF_INTERACTIVE="1" python gofile-downloader.py <url>` |
+
+</br>
+
+Use the environment variable **`GF_MAX_CONCURRENT_DOWNLOADS`** to configure the maximum number of concurrent downloads:
+
+| Platform | Command |
+| :---: | :---: |
+| **Windows Powershell** | `set GF_MAX_CONCURRENT_DOWNLOADS="5" && python gofile-downloader.py <url>` |
+| **Unix Shell**         | `GF_MAX_CONCURRENT_DOWNLOADS="5" python gofile-downloader.py <url>` |
