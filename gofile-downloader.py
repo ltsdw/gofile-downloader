@@ -46,17 +46,17 @@ def die(msg: str) -> NoReturn:
     exit(-1)
 
 
-# increase max_workers for parallel downloads
-# defaults to 5 download at time
 class Main:
-    def __init__(self, url: str, password: str | None = None, max_workers: int = 5) -> None:
+    def __init__(self, url: str, password: str | None = None) -> None:
         root_dir: str | None = getenv("GF_DOWNLOADDIR")
 
         if root_dir and path.exists(root_dir):
             chdir(root_dir)
 
         self._lock: Lock = Lock()
-        self._max_workers: int = max_workers
+
+        # Default to 5 concurrent downloads
+        self._max_workers: int = int(getenv("GF_MAX_CONCURRENT_DOWNLOADS", 5))
         token: str | None = getenv("GF_TOKEN")
         self._message: str = " "
         self._content_dir: str | None = None
