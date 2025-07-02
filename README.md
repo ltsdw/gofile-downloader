@@ -115,3 +115,21 @@ Use the environment variable **`GF_MAX_CONCURRENT_DOWNLOADS`** to configure the 
 | :---: | :---: |
 | **Windows Powershell** | `set GF_MAX_CONCURRENT_DOWNLOADS="5" && python gofile-downloader.py <url>` |
 | **Unix Shell**         | `GF_MAX_CONCURRENT_DOWNLOADS="5" python gofile-downloader.py <url>` |
+
+</br>
+
+Use the environment variable **`GF_MAX_RETRIES`** to configure the number of retries on timeout:
+
+| Platform | Command |
+| :---: | :---: |
+| **Windows Powershell** | `set GF_MAX_RETRIES="5" && python gofile-downloader.py <url>` |
+| **Unix Shell**         | `GF_MAX_RETRIES="5" python gofile-downloader.py <url>` |
+
+</br>
+
+Use the environment variable **`GF_TIMEOUT`** to configure a timeout for connections:
+
+| Platform | Command |
+| :---: | :---: |
+| **Windows Powershell** | `set GF_TIMEOUT="15.0" && python gofile-downloader.py <url>` |
+| **Unix Shell**         | `GF_TIMEOUT="15.0" python gofile-downloader.py <url>` |
