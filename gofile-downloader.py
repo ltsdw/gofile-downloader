@@ -271,8 +271,8 @@ class Main:
             return has_size
 
 
-    #@staticmethod
-    def _is_valid_response(self, status_code: int, part_size: int) -> bool:
+    @staticmethod
+    def _is_valid_response(status_code: int, part_size: int) -> bool:
         """
         _is_valid_response
 
