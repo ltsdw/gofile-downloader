@@ -3,8 +3,9 @@
 
 from os import chdir, getcwd, getenv, listdir, mkdir, path, rmdir
 from sys import exit, stdout, stderr
-from typing import Any, NoReturn, TextIO
-from requests import get, post
+from typing import Any, Iterator, NoReturn, TextIO
+from requests import get, post, Timeout
+from requests.structures import CaseInsensitiveDict
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from platform import system
@@ -49,25 +50,29 @@ def die(msg: str) -> NoReturn:
 class Main:
     def __init__(self, url: str, password: str | None = None) -> None:
         root_dir: str | None = getenv("GF_DOWNLOADDIR")
+        token: str | None = getenv("GF_TOKEN")
+        # Defaults to 5 concurrent downloads
+        self._max_workers: int = int(getenv("GF_MAX_CONCURRENT_DOWNLOADS", 5))
+        # Defaults to 5 retries
+        self._number_retries: int = int(getenv("GF_MAX_RETRIES", 5))
+        # Connection and read timeout, defaults to 15 seconds
+        self._timeout: float = float(getenv("GF_TIMEOUT", 15.0))
+        self._user_agent: str | None = getenv("GF_USERAGENT")
+        self._interactive: bool = getenv("GF_INTERACTIVE") == "1"
 
         if root_dir and path.exists(root_dir):
             chdir(root_dir)
 
         self._lock: Lock = Lock()
-
-        # Default to 5 concurrent downloads
-        self._max_workers: int = int(getenv("GF_MAX_CONCURRENT_DOWNLOADS", 5))
-        token: str | None = getenv("GF_TOKEN")
         self._message: str = " "
         self._content_dir: str | None = None
+        self._root_dir: str = root_dir if root_dir else getcwd()
+        self._token: str = token if token else self._get_token()
 
         # Dictionary to hold information about file and its directories structure
         # {"index": {"path": "", "filename": "", "link": ""}}
         # where the largest index is the top most file
         self._files_info: dict[str, dict[str, str]] = {}
-
-        self._root_dir: str = root_dir if root_dir else getcwd()
-        self._token: str = token if token else self._get_token()
 
         self._parse_url_or_file(url, password)
 
@@ -111,8 +116,7 @@ class Main:
             pass
 
 
-    @staticmethod
-    def _get_token() -> str:
+    def _get_token(self) -> str:
         """
         _get_token
 
@@ -121,20 +125,31 @@ class Main:
         :return: The access token of an account. Or exit if account creation fail.
         """
 
-        user_agent: str | None = getenv("GF_USERAGENT")
         headers: dict[str, str] = {
-            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
         }
 
-        create_account_response: dict[Any, Any] = post("https://api.gofile.io/accounts", headers=headers).json()
+        response: dict[Any, Any] = {}
 
-        if create_account_response["status"] != "ok":
+        for _ in range(self._number_retries):
+            try:
+                response = post(
+                    "https://api.gofile.io/accounts",
+                    headers=headers,
+                    timeout=self._timeout
+                ).json()
+            except Timeout:
+                continue
+            else:
+                break
+
+        if not response and response["status"] != "ok":
             die("Account creation failed!")
 
-        return create_account_response["data"]["token"]
+        return response["data"]["token"]
 
 
     def _download_content(self, file_info: dict[str, str], chunk_size: int = 16384) -> None:
@@ -149,20 +164,16 @@ class Main:
         """
 
         filepath: str = path.join(file_info["path"], file_info["filename"])
-        if path.exists(filepath):
-            if path.getsize(filepath) > 0:
-                _print(f"{filepath} already exist, skipping.{NEW_LINE}")
 
-                return
+        if self._should_skip_download(filepath):
+            return
 
         tmp_file: str =  f"{filepath}.part"
         url: str = file_info["link"]
-        user_agent: str | None = getenv("GF_USERAGENT")
-
         headers: dict[str, str] = {
             "Cookie": f"accountToken={self._token}",
             "Accept-Encoding": "gzip, deflate, br",
-            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
             "Accept": "*/*",
             "Referer": f"{url}{('/' if not url.endswith('/') else '')}",
             "Origin": url,
@@ -173,87 +184,242 @@ class Main:
             "Pragma": "no-cache",
             "Cache-Control": "no-cache"
         }
-
         # check for partial download and resume from last byte
         part_size: int = 0
         if path.isfile(tmp_file):
             part_size = int(path.getsize(tmp_file))
             headers["Range"] = f"bytes={part_size}-"
 
-        has_size: str | None = None
-        status_code: int | None = None
+        for _ in range(self._number_retries):
+            try:
+                has_size = self._perform_download(
+                    file_info, url, tmp_file, headers, part_size, chunk_size
+                )
+            except Timeout:
+                continue
+            else:
+                if has_size:
+                    self._finalize_download(file_info, tmp_file, has_size)
+                break
 
-        try:
-            with get(url, headers=headers, stream=True, timeout=(9, 27)) as response_handler:
-                status_code = response_handler.status_code
 
-                if ((response_handler.status_code in (403, 404, 405, 500)) or
-                    (part_size == 0 and response_handler.status_code != 200) or
-                    (part_size > 0 and response_handler.status_code != 206)):
-                    _print(
-                        f"Couldn't download the file from {url}."
-                        f"{NEW_LINE}"
-                        f"Status code: {status_code}"
-                        f"{NEW_LINE}"
-                    )
+    @staticmethod
+    def _should_skip_download(filepath: str) -> bool:
+        """
+        _should_skip_download
 
-                    return
+        Checks if a file already exists and has non-zero size.
 
-                content_length: str | None = response_handler.headers.get("Content-Length")
-                content_range: str | None = response_handler.headers.get("Content-Range")
-                has_size = content_length if part_size == 0 \
-                    else content_range.split("/")[-1] if content_range else None
+        :param filepath: filepath.
+        :return: True if download should be skipped, False otherwise.
+        """
 
-                if not has_size:
-                    _print(
-                        f"Couldn't find the file size from {url}."
-                        f"{NEW_LINE}"
-                        f"Status code: {status_code}"
-                        f"{NEW_LINE}"
-                    )
+        if path.exists(filepath) and path.getsize(filepath) > 0:
+            _print(f"{filepath} already exist, skipping.{NEW_LINE}")
+            return True
+        return False
 
-                    return
 
-                with open(tmp_file, "ab") as handler:
-                    total_size: float = float(has_size)
+    def _perform_download(
+        self,
+        file_info: dict[str, str],
+        url: str,
+        tmp_file: str,
+        headers: dict[str, str],
+        part_size: int,
+        chunk_size: int
+    ) -> str | None:
+        """
+        _perform_download
 
-                    start_time: float = perf_counter()
-                    for i, chunk in enumerate(response_handler.iter_content(chunk_size=chunk_size)):
-                        progress: float = (part_size + (i * len(chunk))) / total_size * 100
+        Executes the HTTP GET request, processes file chunks, and tracks progress.
 
-                        handler.write(chunk)
+        :param file_info: a dictionary containing file details.
+        :param url: the file download URL.
+        :param tmp_file: temporary file path for partial downloads.
+        :param headers: request headers.
+        :param part_size: the current partial file size.
+        :param chunk_size: number of bytes to read per iteration.
+        :return: the total file size (if available).
+        """
 
-                        rate: float = (i * len(chunk)) / (perf_counter()-start_time)
-                        unit: str = "B/s"
-                        if rate < (1024):
-                            unit = "B/s"
-                        elif rate < (1024*1024):
-                            rate /= 1024
-                            unit = "KB/s"
-                        elif rate < (1024*1024*1024):
-                            rate /= (1024 * 1024)
-                            unit = "MB/s"
-                        elif rate < (1024*1024*1024*1024):
-                            rate /= (1024 * 1024 * 1024)
-                            unit = "GB/s"
+        with get(url, headers=headers, stream=True, timeout=self._timeout) as response:
+            status_code: int = response.status_code
 
-                        # thread safe update the self._message, so no output interleaves
-                        with self._lock:
-                            _print(f"\r{' ' * len(self._message)}")
+            if not self._is_valid_response(response.status_code, part_size):
+                _print(
+                    f"Couldn't download the file from {url}.{NEW_LINE}"
+                    f"Status code: {status_code}{NEW_LINE}"
+                )
+                return None
 
-                            self._message = f"\rDownloading {file_info['filename']}: {part_size + i * len(chunk)}" \
-                            f" of {has_size} {round(progress, 1)}% {round(rate, 1)}{unit}"
+            has_size: str | None = self._extract_file_size(response.headers, part_size, url, status_code)
 
-                            _print(self._message)
-        finally:
-            with self._lock:
-                if has_size and path.getsize(tmp_file) == int(has_size):
-                    _print(f"\r{' ' * len(self._message)}")
-                    _print(f"\rDownloading {file_info['filename']}: "
-                        f"{path.getsize(tmp_file)} of {has_size} Done!"
-                        f"{NEW_LINE}"
-                    )
-                    move(tmp_file, filepath)
+            if not has_size:
+                return None
+
+            self._write_chunks(
+                response.iter_content(chunk_size=chunk_size),
+                tmp_file,
+                part_size,
+                float(has_size),
+                file_info["filename"]
+            )
+
+            return has_size
+
+
+    @staticmethod
+    def _is_valid_response(status_code: int, part_size: int) -> bool:
+        """
+        _is_valid_response
+
+        Validates HTTP status code based on partial download state.
+
+        :param status_code: the HTTP status code.
+        :param part_size: the current partial file size.
+        :return: True if status code is acceptable, False otherwise.
+        """
+
+        if status_code in (403, 404, 405, 500):
+            return False
+        if part_size == 0 and status_code != 200:
+            return False
+        if part_size > 0 and status_code != 206:
+            return False
+        return True
+
+
+    @staticmethod
+    def _extract_file_size(
+        headers: CaseInsensitiveDict[str], part_size: int, url: str, status_code: int
+    ) -> str | None:
+        """
+        _extract_file_size
+
+        Retrieves the file size from HTTP headers.
+
+        :param headers: the HTTP response headers.
+        :param part_size: the current partial file size.
+        :param url: the request URL.
+        :param status_code: the HTTP status code.
+        :return: the total file size as a string, or None if unavailable.
+        """
+
+        content_length: str | None = headers.get("Content-Length")
+        content_range: str | None = headers.get("Content-Range")
+        has_size: str | None = (
+            content_length if part_size == 0
+            else content_range.split("/")[-1] if content_range
+            else None
+        )
+
+        if not has_size:
+            _print(
+                f"Couldn't find the file size from {url}.{NEW_LINE}"
+                f"Status code: {status_code}{NEW_LINE}"
+            )
+
+        return has_size
+
+
+    def _write_chunks(
+        self,
+        chunks: Iterator[Any],
+        tmp_file: str,
+        part_size: int,
+        total_size: float,
+        filename: str
+    ) -> None:
+        """
+        _write_chunks
+
+        Iterates over download chunks and writes them to disk, updating progress.
+
+        :param chunks: a generator of byte chunks.
+        :param tmp_file: temporary file path.
+        :param part_size: number of bytes already downloaded.
+        :param total_size: total file size in bytes.
+        :param filename: the file's name.
+        :return:
+        """
+
+        start_time: float = perf_counter()
+
+        with open(tmp_file, "ab") as f:
+            for i, chunk in enumerate(chunks):
+                f.write(chunk)
+                self._update_progress(filename, part_size, i, chunk, total_size, start_time)
+
+
+    def _update_progress(
+        self,
+        filename: str,
+        part_size: int,
+        i: int,
+        chunk: bytes,
+        total_size: float,
+        start_time: float
+    ) -> None:
+        """
+        _update_progress
+
+        Calculates and displays download progress and transfer rate.
+
+        :param filename: the name of the file being downloaded.
+        :param part_size: initial file size in bytes.
+        :param i: current iteration number.
+        :param chunk: the downloaded byte chunk.
+        :param total_size: total file size.
+        :param start_time: download start time.
+        :return:
+        """
+
+        progress: float = (part_size + (i * len(chunk))) / total_size * 100
+        rate: float = (i * len(chunk)) / (perf_counter() - start_time)
+
+        unit: str = "B/s"
+        if rate < 1024:
+            unit = "B/s"
+        elif rate < (1024 ** 2):
+            rate /= 1024
+            unit = "KB/s"
+        elif rate < (1024 ** 3):
+            rate /= (1024 ** 2)
+            unit = "MB/s"
+        else:
+            rate /= (1024 ** 3)
+            unit = "GB/s"
+
+        with self._lock:
+            _print(f"\r{' ' * len(self._message)}")
+            self._message = (
+                f"\rDownloading {filename}: {part_size + i * len(chunk)} "
+                f"of {int(total_size)} {round(progress, 1)}% {round(rate, 1)}{unit}"
+            )
+            _print(self._message)
+
+
+    def _finalize_download(self, file_info: dict[str, str], tmp_file: str, has_size: str) -> None:
+        """
+        _finalize_download
+
+        Verifies the final file size and moves the temporary file to its destination.
+
+        :param file_info: a dictionary containing file details.
+        :param tmp_file: temporary file path.
+        :param has_size: expected file size.
+        :return:
+        """
+
+        with self._lock:
+            if path.getsize(tmp_file) == int(has_size):
+                _print(f"\r{' ' * len(self._message)}")
+                _print(
+                    f"\rDownloading {file_info['filename']}: {path.getsize(tmp_file)} "
+                    f"of {has_size} Done!{NEW_LINE}"
+                )
+                move(tmp_file, path.join(file_info["path"], file_info["filename"]))
 
 
     def _parse_links_recursively(
@@ -278,24 +444,29 @@ class Main:
         :return:
         """
 
+        response: dict[Any, Any] = {}
         url: str = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true&sortField=createTime&sortDirection=1"
 
         if password:
             url = f"{url}&password={password}"
 
-        user_agent: str | None = getenv("GF_USERAGENT")
-
         headers: dict[str, str] = {
-            "User-Agent": user_agent if user_agent else "Mozilla/5.0",
+            "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
             "Authorization": f"Bearer {self._token}",
         }
 
-        response: dict[Any, Any] = get(url, headers=headers).json()
+        for _ in range(self._number_retries):
+            try:
+                response = get(url, headers=headers, timeout=self._timeout).json()
+            except Timeout:
+                continue
+            else:
+                break
 
-        if response["status"] != "ok":
+        if not response or response["status"] != "ok":
             _print(f"Failed to get a link as response from the {url}.{NEW_LINE}")
             return
 
@@ -453,9 +624,7 @@ class Main:
             self._reset_class_properties()
             return
 
-        interactive: bool = getenv("GF_INTERACTIVE") == "1"
-
-        if interactive:
+        if self._interactive:
             self._print_list_files()
 
             input_list: list[str] = input(
