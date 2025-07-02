@@ -133,3 +133,12 @@ Use the environment variable **`GF_TIMEOUT`** to configure a timeout for connect
 | :---: | :---: |
 | **Windows Powershell** | `set GF_TIMEOUT="15.0" && python gofile-downloader.py <url>` |
 | **Unix Shell**         | `GF_TIMEOUT="15.0" python gofile-downloader.py <url>` |
+
+</br>
+
+Use the environment variable **`GF_CHUNK_SIZE`** to configure the number of bytes read per chunk:
+
+| Platform | Command |
+| :---: | :---: |
+| **Windows Powershell** | `set GF_CHUNK_SIZE="2097152" && python gofile-downloader.py <url>` |
+| **Unix Shell**         | `GF_CHUNK_SIZE="2097152" python gofile-downloader.py <url>` |

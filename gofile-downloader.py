@@ -4,7 +4,7 @@
 from os import chdir, getcwd, getenv, listdir, mkdir, path, rmdir
 from sys import exit, stdout, stderr
 from typing import Any, Iterator, NoReturn, TextIO
-from requests import get, post, Timeout
+from requests import Session, Timeout
 from requests.structures import CaseInsensitiveDict
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
@@ -59,21 +59,30 @@ class Main:
         self._timeout: float = float(getenv("GF_TIMEOUT", 15.0))
         self._user_agent: str | None = getenv("GF_USERAGENT")
         self._interactive: bool = getenv("GF_INTERACTIVE") == "1"
+        # The number of bytes it should read into memory
+        self._chunk_size: int = int(getenv("GF_CHUNK_SIZE", 2097152))
 
         if root_dir and path.exists(root_dir):
             chdir(root_dir)
 
+        self._session: Session = Session()
         self._lock: Lock = Lock()
         self._message: str = " "
         self._content_dir: str | None = None
         self._root_dir: str = root_dir if root_dir else getcwd()
-        self._token: str = token if token else self._get_token()
+        self._headers: dict[str, str] = {
+            "Accept-Encoding": "gzip",
+            "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
+            "Connection": "keep-alive",
+            "Accept": "*/*",
+        }
 
         # Dictionary to hold information about file and its directories structure
         # {"index": {"path": "", "filename": "", "link": ""}}
         # where the largest index is the top most file
         self._files_info: dict[str, dict[str, str]] = {}
 
+        self._set_account_access_token(token)
         self._parse_url_or_file(url, password)
 
 
@@ -116,29 +125,28 @@ class Main:
             pass
 
 
-    def _get_token(self) -> str:
+    def _set_account_access_token(self, token: str | None = None) -> None:
         """
-        _get_token
+        _set_account_access_token
 
-        Gets the access token of account created.
+        Get a new access token for the account created or use the token provided for an already existent account.
 
-        :return: The access token of an account. Or exit if account creation fail.
+        :param token: token to be used accross connections if available.
+        :return:
         """
 
-        headers: dict[str, str] = {
-            "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept": "*/*",
-            "Connection": "keep-alive",
-        }
+        if token:
+            self._headers["Cookie"] = f"accountToken={token}"
+            self._headers["Authorization"] = f"Bearer {token}"
+            return
 
         response: dict[Any, Any] = {}
 
         for _ in range(self._number_retries):
             try:
-                response = post(
+                response = self._session.post(
                     "https://api.gofile.io/accounts",
-                    headers=headers,
+                    headers=self._headers,
                     timeout=self._timeout
                 ).json()
             except Timeout:
@@ -149,17 +157,17 @@ class Main:
         if not response and response["status"] != "ok":
             die("Account creation failed!")
 
-        return response["data"]["token"]
+        self._headers["Cookie"] = f"accountToken={response["data"]["token"]}"
+        self._headers["Authorization"] = f"Bearer {response["data"]["token"]}"
 
 
-    def _download_content(self, file_info: dict[str, str], chunk_size: int = 16384) -> None:
+    def _download_content(self, file_info: dict[str, str]) -> None:
         """
         _download_content
 
         Requests the contents of the file and writes it.
 
         :param file_info: a dictionary with information about a file to be downloaded.
-        :param chunk_size: the number of bytes it should read into memory.
         :return:
         """
 
@@ -170,30 +178,26 @@ class Main:
 
         tmp_file: str =  f"{filepath}.part"
         url: str = file_info["link"]
-        headers: dict[str, str] = {
-            "Cookie": f"accountToken={self._token}",
-            "Accept-Encoding": "gzip, deflate, br",
-            "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
-            "Accept": "*/*",
-            "Referer": f"{url}{('/' if not url.endswith('/') else '')}",
-            "Origin": url,
-            "Connection": "keep-alive",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-            "Pragma": "no-cache",
-            "Cache-Control": "no-cache"
-        }
+
         # check for partial download and resume from last byte
-        part_size: int = 0
+        headers: dict[str, str] = self._headers.copy()
         if path.isfile(tmp_file):
             part_size = int(path.getsize(tmp_file))
             headers["Range"] = f"bytes={part_size}-"
 
         for _ in range(self._number_retries):
             try:
-                has_size = self._perform_download(
-                    file_info, url, tmp_file, headers, part_size, chunk_size
+                part_size: int = 0
+                if path.isfile(tmp_file):
+                    part_size = int(path.getsize(tmp_file))
+                    headers["Range"] = f"bytes={part_size}-"
+
+                has_size: str | None = self._perform_download(
+                    file_info,
+                    url,
+                    tmp_file,
+                    headers,
+                    part_size
                 )
             except Timeout:
                 continue
@@ -227,7 +231,6 @@ class Main:
         tmp_file: str,
         headers: dict[str, str],
         part_size: int,
-        chunk_size: int
     ) -> str | None:
         """
         _perform_download
@@ -239,11 +242,10 @@ class Main:
         :param tmp_file: temporary file path for partial downloads.
         :param headers: request headers.
         :param part_size: the current partial file size.
-        :param chunk_size: number of bytes to read per iteration.
         :return: the total file size (if available).
         """
 
-        with get(url, headers=headers, stream=True, timeout=self._timeout) as response:
+        with self._session.get(url, headers=headers, stream=True, timeout=self._timeout) as response:
             status_code: int = response.status_code
 
             if not self._is_valid_response(response.status_code, part_size):
@@ -259,7 +261,7 @@ class Main:
                 return None
 
             self._write_chunks(
-                response.iter_content(chunk_size=chunk_size),
+                response.iter_content(chunk_size=self._chunk_size),
                 tmp_file,
                 part_size,
                 float(has_size),
@@ -269,8 +271,8 @@ class Main:
             return has_size
 
 
-    @staticmethod
-    def _is_valid_response(status_code: int, part_size: int) -> bool:
+    #@staticmethod
+    def _is_valid_response(self, status_code: int, part_size: int) -> bool:
         """
         _is_valid_response
 
@@ -450,17 +452,9 @@ class Main:
         if password:
             url = f"{url}&password={password}"
 
-        headers: dict[str, str] = {
-            "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept": "*/*",
-            "Connection": "keep-alive",
-            "Authorization": f"Bearer {self._token}",
-        }
-
         for _ in range(self._number_retries):
             try:
-                response = get(url, headers=headers, timeout=self._timeout).json()
+                response = self._session.get(url, headers=self._headers, timeout=self._timeout).json()
             except Timeout:
                 continue
             else:
