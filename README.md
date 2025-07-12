@@ -72,13 +72,13 @@ https://gofile.io/d/contentid4 password4
 
 </br>
 
-Use the environment variable **`GF_DOWNLOADDIR`** to specify where to download to (the
+Use the environment variable **`GF_DOWNLOAD_DIR`** to specify where to download to (the
 path must exist already):
 
 | Shell | Command |
 |:---:| :---: |
-| **Windows Powershell** | `set GF_DOWNLOADDIR="C:\path\to\the\directory" && python gofile-downloader.py <url>` |
-| **Unix Shell** | `GF_DOWNLOADDIR="/path/to/the/directory" python gofile-downloader.py <url>`          |
+| **Windows Powershell** | `set GF_DOWNLOAD_DIR="C:\path\to\the\directory" && python gofile-downloader.py <url>` |
+| **Unix Shell** | `GF_DOWNLOAD_DIR="/path/to/the/directory" python gofile-downloader.py <url>`          |
 
 </br>
 

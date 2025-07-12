@@ -1,13 +1,14 @@
 #! /usr/bin/env python3
 
 
-from os import chdir, getcwd, getenv, listdir, mkdir, path, rmdir
+from os import getcwd, getenv, listdir, makedirs, path, rmdir
 from sys import exit, stdout, stderr
 from typing import Any, Iterator, NoReturn, TextIO
-from requests import Session, Timeout
+from itertools import count
+from requests import Session, Response, Timeout
 from requests.structures import CaseInsensitiveDict
 from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
+from threading import Lock, Event
 from platform import system
 from hashlib import sha256
 from shutil import move
@@ -47,10 +48,10 @@ def die(msg: str) -> NoReturn:
     exit(-1)
 
 
-class Main:
-    def __init__(self, url: str, password: str | None = None) -> None:
-        root_dir: str | None = getenv("GF_DOWNLOADDIR")
-        token: str | None = getenv("GF_TOKEN")
+class Downloader:
+    def __init__(self, url_or_file: str, password: str | None = None) -> None:
+        root_dir: str | None = getenv("GF_DOWNLOAD_DIR")
+
         # Defaults to 5 concurrent downloads
         self._max_workers: int = int(getenv("GF_MAX_CONCURRENT_DOWNLOADS", 5))
         # Defaults to 5 retries
@@ -62,14 +63,13 @@ class Main:
         # The number of bytes it should read into memory
         self._chunk_size: int = int(getenv("GF_CHUNK_SIZE", 2097152))
 
-        if root_dir and path.exists(root_dir):
-            chdir(root_dir)
-
         self._session: Session = Session()
         self._lock: Lock = Lock()
+        self._stop_event: Event = Event()
         self._message: str = " "
-        self._content_dir: str | None = None
         self._root_dir: str = root_dir if root_dir else getcwd()
+        self._url_or_file: str = url_or_file
+        self._password: str | None = password
         self._headers: dict[str, str] = {
             "Accept-Encoding": "gzip",
             "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
@@ -82,8 +82,89 @@ class Main:
         # where the largest index is the top most file
         self._files_info: dict[str, dict[str, str]] = {}
 
-        self._set_account_access_token(token)
-        self._parse_url_or_file(url, password)
+
+    def _parse_url_or_file(self, url_or_file: str, _password: str | None = None) -> None:
+        """
+        _parse_url_or_file
+
+        Parses a file or a url for possible links.
+
+        :param url_or_file: a filename with urls to be downloaded or a single url.
+        :param password: password to be used across all links, if not provided a per link password may be used.
+        :return:
+        """
+
+        if not (path.exists(url_or_file) and path.isfile(url_or_file)):
+            self._run(url_or_file, _password)
+            return
+
+        with open(url_or_file, "r") as f:
+            lines: list[str] = f.readlines()
+
+        for line in lines:
+            line_splitted: list[str] = line.split(" ")
+            url: str = line_splitted[0].strip()
+            password: str | None = _password if _password else line_splitted[1].strip() \
+                if len(line_splitted) > 1 else _password
+
+            self._run(url, password)
+
+
+    def _run(self, url: str, password: str | None = None) -> None:
+        """
+        _run
+
+        Requests to start downloading files.
+
+        :param url: url of the content.
+        :param password: content's password.
+        :return:
+        """
+
+        try:
+            if not url.split("/")[-2] == "d":
+                _print(f"The url probably doesn't have an id in it: {url}.{NEW_LINE}")
+                return
+
+            content_id: str = url.split("/")[-1]
+        except IndexError:
+            _print(f"{url} doesn't seem a valid url.{NEW_LINE}")
+            return
+
+        _password: str | None = sha256(password.encode()).hexdigest() if password else password
+
+        content_dir: str = path.join(self._root_dir, content_id)
+        self._build_content_tree_structure(content_dir, content_id, _password)
+
+        # removes the root content directory if there's no file or subdirectory
+        if not listdir(content_dir) and not self._files_info:
+            _print(f"Empty directory for url: {url}, nothing done.{NEW_LINE}")
+            self._remove_dir(content_dir)
+            self._reset_class_properties()
+            return
+
+        if self._interactive:
+            self._do_interactive(content_dir)
+
+        self._threaded_downloads()
+        self._reset_class_properties()
+
+
+    def _get_response(self, **kwargs: Any) -> Response | None:
+        """
+        _get_response
+
+        Auxiliary function for the requests.session.get.
+
+        :param kwargs: arguments for the requests.session.get function.
+        :return: requests.Response or None on requests.Timeout.
+        """
+
+        for _ in range(self._number_retries):
+            try:
+                return self._session.get(timeout=self._timeout, **kwargs)
+            except Timeout:
+                continue
 
 
     def _threaded_downloads(self) -> None:
@@ -95,33 +176,40 @@ class Main:
         :return:
         """
 
-        if not self._content_dir:
-            _print(f"Content directory wasn't created, nothing done.{NEW_LINE}")
-            return
-
-        chdir(self._content_dir)
-
         with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
             for item in self._files_info.values():
+                if self._stop_event.is_set():
+                    return
+
                 executor.submit(self._download_content, item)
 
-        chdir(self._root_dir)
 
-
-    def _create_dir(self, dirname: str) -> None:
+    def _create_dirs(self, dirname: str) -> None:
         """
-        _create_dir
+        _create_dirs
 
-        creates a directory where the files will be saved if doesn't exist and change to it.
+        Creates a directory and its subdirectories recursively if they don't exist.
+
+        :param dirname: name of the directory to be created.
+        :return:
+        """
+
+        makedirs(dirname, exist_ok = True)
+
+
+    def _remove_dir(self, dirname: str) -> None:
+        """
+        _remove_dir
+
+        Removes a directory if it's empty ignoring any throw.
 
         :param dirname: name of the directory to be created.
         :return:
         """
 
         try:
-            mkdir(dirname)
-        # if the directory already exist is safe to do nothing
-        except FileExistsError:
+            rmdir(dirname)
+        except:
             pass
 
 
@@ -245,19 +333,37 @@ class Main:
         :return: the total file size (if available).
         """
 
-        with self._session.get(url, headers=headers, stream=True, timeout=self._timeout) as response:
+        if self._stop_event.is_set():
+            return
+
+        response: Response | None = self._get_response(url=url, headers=headers, stream=True)
+
+        if not response:
+            self._clear_message()
+            _print(
+                f"Couldn't download the file, failed to get a response from {url}.{NEW_LINE}"
+            )
+            return None
+
+        with response:
             status_code: int = response.status_code
 
             if not self._is_valid_response(response.status_code, part_size):
+                self._clear_message()
                 _print(
                     f"Couldn't download the file from {url}.{NEW_LINE}"
                     f"Status code: {status_code}{NEW_LINE}"
                 )
                 return None
 
-            has_size: str | None = self._extract_file_size(response.headers, part_size, url, status_code)
+            has_size: str | None = self._extract_file_size(response.headers, part_size)
 
             if not has_size:
+                self._clear_message()
+                _print(
+                    f"Couldn't find the file size from {url}.{NEW_LINE}"
+                    f"Status code: {status_code}{NEW_LINE}"
+                )
                 return None
 
             self._write_chunks(
@@ -293,9 +399,7 @@ class Main:
 
 
     @staticmethod
-    def _extract_file_size(
-        headers: CaseInsensitiveDict[str], part_size: int, url: str, status_code: int
-    ) -> str | None:
+    def _extract_file_size(headers: CaseInsensitiveDict[str], part_size: int) -> str | None:
         """
         _extract_file_size
 
@@ -303,8 +407,6 @@ class Main:
 
         :param headers: the HTTP response headers.
         :param part_size: the current partial file size.
-        :param url: the request URL.
-        :param status_code: the HTTP status code.
         :return: the total file size as a string, or None if unavailable.
         """
 
@@ -315,12 +417,6 @@ class Main:
             else content_range.split("/")[-1] if content_range
             else None
         )
-
-        if not has_size:
-            _print(
-                f"Couldn't find the file size from {url}.{NEW_LINE}"
-                f"Status code: {status_code}{NEW_LINE}"
-            )
 
         return has_size
 
@@ -350,6 +446,9 @@ class Main:
 
         with open(tmp_file, "ab") as f:
             for i, chunk in enumerate(chunks):
+                if self._stop_event.is_set():
+                    return
+
                 f.write(chunk)
                 self._update_progress(filename, part_size, i, chunk, total_size, start_time)
 
@@ -394,7 +493,7 @@ class Main:
             unit = "GB/s"
 
         with self._lock:
-            _print(f"\r{' ' * len(self._message)}")
+            self._clear_message()
             self._message = (
                 f"\rDownloading {filename}: {part_size + i * len(chunk)} "
                 f"of {int(total_size)} {round(progress, 1)}% {round(rate, 1)}{unit}"
@@ -424,133 +523,143 @@ class Main:
                 move(tmp_file, path.join(file_info["path"], file_info["filename"]))
 
 
-    def _parse_links_recursively(
-        self,
-        content_id: str,
-        password: str | None = None,
-        pathing_count: dict[str, int] = {},
-        recursive_files_index: dict[str, int] = {"index": 0}
-    ) -> None:
+    def _register_file(self, file_index: count, filepath: str, file_url: str) -> None:
         """
-        _parse_links_recursively
+        _register_file
 
-        Parses for possible links recursively and populate a list with file's info
-        while also creating directories and subdirectories.
+        Registers file information into the internal files info dictionary
+        (with sequential index, path, filename and download url).
 
-        :param content_id: url to the content.
-        :param password: content's password.
-        :param pathing_count: pointer-like object for keeping track of naming collision of pathing (filepaths and
-                              directories) should only be internally used by this function to keep object state track.
-        :param recursive_files_index: pointer-like object for keeping track of files indeces,
-                                      should only be internally used by this function toakeep object state track.
+        :param file_index: an itertools.count object used to sequentially index discovered files.
+                           Acts as a mutable counter local to the parsing thread context.
+                           Should not be modified outside this function.
+        :param filepath: absolute or relative path to the file on the local filesystem.
+        :param file_url: remote URL link for downloading the file.
         :return:
         """
 
-        response: dict[Any, Any] = {}
+        self._files_info[str(next(file_index))] = {
+            "path": path.dirname(filepath),
+            "filename": path.basename(filepath),
+            "link": file_url
+        }
+
+
+    def _resolve_naming_collision(
+        self,
+        pathing_count: dict[str, int],
+        absolute_parent_dir: str,
+        child_name: str,
+        is_dir: bool = False,
+    ) -> str:
+        """
+        _resolve_naming_collision
+
+        Ensures unique file or directory paths by checking and updating a naming collision
+        tracker. If a collision is detected, appends a numeric suffix to the name to
+        avoid overwriting existing paths.
+
+        :param pathing_count: dictionary used to track the number of naming collisions
+                              for each path encountered during traversal.
+        :param absolute_parent_dir: absolute path to the parent directory where the child
+                                    (file or directory) will be created.
+        :param child_name: original name of the file or directory.
+        :param is_dir: boolean flag indicating whether the child is a directory, defaults to False.
+        :return: a unique filepath string with a numeric suffix appended if needed.
+        """
+
+        filepath: str = path.join(absolute_parent_dir, child_name)
+
+        if filepath in pathing_count:
+            pathing_count[filepath] += 1
+        else:
+            pathing_count[filepath] = 0
+
+        if pathing_count and pathing_count[filepath] > 0 and is_dir:
+            return f"{filepath}({pathing_count[filepath]})"
+
+        if pathing_count and pathing_count[filepath] > 0:
+            extension: str
+            root, extension = path.splitext(filepath)
+
+            return f"{root}({pathing_count[filepath]}){extension}"
+
+        return filepath
+
+
+    def _build_content_tree_structure(
+        self,
+        parent_dir: str,
+        content_id: str,
+        password: str | None = None,
+        pathing_count: dict[str, int] | None = None,
+        file_index: count = count(start=0, step=1)
+    ) -> None:
+        """
+        _build_content_tree_structure
+
+        Recursively traverses a remote content structure and builds a corresponding
+        local directory tree (handling naming collisions), while registering files url.
+
+        :param parent_dir: absolute path to the parent directory where the current content
+                           directory or file should be created.
+        :param content_id: content identifier.
+        :param password: optional password to access protected content.
+        :param pathing_count: pointer-like dictionary used internally to track naming collisions
+                              for file and directory paths. Should not be modified outside this function.
+        :param file_index: an itertools.count object used to sequentially index discovered files.
+                           Acts as a mutable counter local to the parsing thread context.
+                           Should not be modified outside this function.
+        :return:
+        """
+
         url: str = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true&sortField=createTime&sortDirection=1"
+
+        if not pathing_count:
+            pathing_count = {}
 
         if password:
             url = f"{url}&password={password}"
 
-        for _ in range(self._number_retries):
-            try:
-                response = self._session.get(url, headers=self._headers, timeout=self._timeout).json()
-            except Timeout:
-                continue
-            else:
-                break
+        response: Response | None = self._get_response(url=url, headers=self._headers)
+        json_response: dict[str, Any] = {} if not response else response.json()
 
-        if not response or response["status"] != "ok":
-            _print(f"Failed to get a link as response from the {url}.{NEW_LINE}")
+        if not json_response or json_response["status"] != "ok":
+            _print(f"Failed to fetch data response from the {url}.{NEW_LINE}")
             return
 
-        data: dict[Any, Any] = response["data"]
+        data: dict[str, Any] = json_response["data"]
 
         if "password" in data and "passwordStatus" in data and data["passwordStatus"] != "passwordOk":
             _print(f"Password protected link. Please provide the password.{NEW_LINE}")
             return
 
         if data["type"] != "folder":
-            current_dir: str = getcwd()
-            filename: str = data["name"]
-            recursive_files_index["index"] += 1
-            filepath: str = path.join(current_dir, filename)
+            filepath: str = self._resolve_naming_collision(pathing_count, parent_dir, data["name"])
 
-            if filepath in pathing_count:
-                pathing_count[filepath] += 1
-            else:
-                pathing_count[filepath] = 0
-
-            if pathing_count and pathing_count[filepath] > 0:
-                extension: str
-                filename, extension = path.splitext(filename)
-                filename = f"{filename}({pathing_count[filepath]}){extension}"
-
-            self._files_info[str(recursive_files_index["index"])] = {
-                "path": current_dir,
-                "filename": filename,
-                "link": data["link"]
-            }
-
+            self._register_file(file_index, filepath, data["link"])
             return
 
-        # Do not use the default root directory named "root" created by gofile,
-        # the naming may clash if another url link uses the same "root" name.
-        # And if the root directory isn't named as the content id
-        # create such a directory before proceeding
         folder_name: str = data["name"]
+        absolute_path: str = self._resolve_naming_collision(pathing_count, parent_dir, folder_name)
 
-        if not self._content_dir and folder_name != content_id:
-            self._content_dir = path.join(self._root_dir, content_id)
+        # If the content directory (the root directory) directory isn't named the same as the content_id,
+        # use the content_id as a name for the content directory.
+        #
+        # Also do not use the default root directory named as "root" created by default.
+        if path.basename(parent_dir) == content_id:
+            absolute_path = parent_dir
 
-            self._create_dir(self._content_dir)
-            chdir(self._content_dir)
-        elif not self._content_dir and folder_name == content_id:
-            self._content_dir = path.join(self._root_dir, content_id)
-            self._create_dir(self._content_dir)
+        self._create_dirs(absolute_path)
 
-        # Only create subdirectories after the content directory is already created
-        absolute_path: str = path.join(getcwd(), folder_name)
-
-        if absolute_path in pathing_count:
-            pathing_count[absolute_path] += 1
-        else:
-            pathing_count[absolute_path] = 0
-
-        if pathing_count and pathing_count[absolute_path] > 0:
-            absolute_path = f"{absolute_path}({pathing_count[absolute_path]})"
-
-        self._create_dir(absolute_path)
-        chdir(absolute_path)
-
-        for child_id in data["children"]:
-            child: dict[Any, Any] = data["children"][child_id]
-
+        # Checks if there is any children (files and directories) and handle them
+        for child in data["children"].values():
             if child["type"] == "folder":
-                self._parse_links_recursively(child["id"], password, pathing_count, recursive_files_index)
+                self._build_content_tree_structure(absolute_path, child["id"], password, pathing_count, file_index)
             else:
-                current_dir: str = getcwd()
-                filename: str = child["name"]
-                recursive_files_index["index"] += 1
-                filepath: str = path.join(current_dir, filename)
+                filepath: str = self._resolve_naming_collision(pathing_count, absolute_path, child["name"])
 
-                if filepath in pathing_count:
-                    pathing_count[filepath] += 1
-                else:
-                    pathing_count[filepath] = 0
-
-                if pathing_count and pathing_count[filepath] > 0:
-                    extension: str
-                    filename, extension = path.splitext(filename)
-                    filename = f"{filename}({pathing_count[filepath]}){extension}"
-
-                self._files_info[str(recursive_files_index["index"])] = {
-                    "path": current_dir,
-                    "filename": filename,
-                    "link": child["link"]
-                }
-
-        chdir(path.pardir)
+                self._register_file(file_index, filepath, child["link"])
 
 
     def _print_list_files(self) -> None:
@@ -580,94 +689,37 @@ class Main:
             )
 
 
-    def _download(self, url: str, password: str | None = None) -> None:
+    def _do_interactive(self, content_dir: str) -> None:
         """
-        _download
+        _do_interactive
 
-        Requests to start downloading files.
+        Performs interactive file selection for download.
 
-        :param url: url of the content.
-        :param password: content's password.
+        :param content_dir: Content root directory.
         :return:
         """
 
-        try:
-            if not url.split("/")[-2] == "d":
-                _print(f"The url probably doesn't have an id in it: {url}.{NEW_LINE}")
-                return
+        self._print_list_files()
 
-            content_id: str = url.split("/")[-1]
-        except IndexError:
-            _print(f"{url} doesn't seem a valid url.{NEW_LINE}")
-            return
+        # Ensure only valid index strings are stored.
+        input_list: set[str] = set(input(
+            f"Files to download (Ex: 1 3 7) | or leave empty to download them all"
+            f"{NEW_LINE}"
+            f":: "
+        ).split())
+        input_list = set(self._files_info.keys()) if not input_list \
+                     else input_list & set(self._files_info.keys())
 
-        _password: str | None = sha256(password.encode()).hexdigest() if password else password
-
-        self._parse_links_recursively(content_id, _password)
-
-        # probably the link is broken so the content dir wasn't even created.
-        if not self._content_dir:
-            _print(f"No content directory created for url: {url}, nothing done.{NEW_LINE}")
+        if not input_list:
+            _print(f"Nothing done.{NEW_LINE}")
+            self._remove_dir(content_dir)
             self._reset_class_properties()
             return
 
-        # removes the root content directory if there's no file or subdirectory
-        if not listdir(self._content_dir) and not self._files_info:
-            _print(f"Empty directory for url: {url}, nothing done.{NEW_LINE}")
-            rmdir(self._content_dir)
-            self._reset_class_properties()
-            return
+        keys_to_delete: list[str] = list(set(self._files_info.keys()) - set(input_list))
 
-        if self._interactive:
-            self._print_list_files()
-
-            input_list: list[str] = input(
-                f"Files to download (Ex: 1 3 7 | or leave empty to download them all)"
-                f"{NEW_LINE}"
-                f":: "
-            ).split()
-            input_list = list(set(input_list) & set(self._files_info.keys())) # ensure only valid index strings are stored
-
-            if not input_list:
-                _print(f"Nothing done.{NEW_LINE}")
-                rmdir(self._content_dir)
-                self._reset_class_properties()
-                return
-
-            keys_to_delete: list[str] = list(set(self._files_info.keys()) - set(input_list))
-
-            for key in keys_to_delete:
-                del self._files_info[key]
-
-        self._threaded_downloads()
-        self._reset_class_properties()
-
-
-    def _parse_url_or_file(self, url_or_file: str, _password: str | None = None) -> None:
-        """
-        _parse_url_or_file
-
-        Parses a file or a url for possible links.
-
-        :param url_or_file: a filename with urls to be downloaded or a single url.
-        :param password: password to be used across all links, if not provided a per link password may be used.
-        :return:
-        """
-
-        if not (path.exists(url_or_file) and path.isfile(url_or_file)):
-            self._download(url_or_file, _password)
-            return
-
-        with open(url_or_file, "r") as f:
-            lines: list[str] = f.readlines()
-
-        for line in lines:
-            line_splitted: list[str] = line.split(" ")
-            url: str = line_splitted[0].strip()
-            password: str | None = _password if _password else line_splitted[1].strip() \
-                if len(line_splitted) > 1 else _password
-
-            self._download(url, password)
+        for key in keys_to_delete:
+            del self._files_info[key]
 
 
     def _reset_class_properties(self) -> None:
@@ -681,27 +733,72 @@ class Main:
         """
 
         self._message: str = " "
-        self._content_dir: str | None = None
         self._files_info.clear()
+
+    def _clear_message(self) -> None:
+        """
+        _clear_message
+
+        Empties the terminal if there's something already to the current line.
+
+        :return:
+        """
+
+        _print(f"\r{' ' * len(self._message)}\r")
+
+
+    def run(self) -> None:
+        """
+        run
+
+        This method starts the download process after the creation of the Downloader object.
+
+        :return:
+        """
+
+        token: str | None = getenv("GF_TOKEN")
+
+        _print(f"Starting, please wait...{NEW_LINE}")
+        self._set_account_access_token(token)
+        self._parse_url_or_file(self._url_or_file, self._password)
+
+
+    def stop(self) -> None:
+        """
+        stop
+
+        Stops all work from continuing.
+
+        :return:
+        """
+
+        with self._lock:
+            self._clear_message()
+            self._message = f"\rStopping, please wait...{NEW_LINE}"
+            _print(self._message)
+            self._stop_event.set()
 
 
 if __name__ == "__main__":
+    downloader: Downloader | None = None
+
     try:
         from sys import argv
 
-        url: str | None = None
+        url_or_file: str | None = None
         password: str | None = None
         argc: int = len(argv)
 
         if argc > 1:
-            url = argv[1]
+            url_or_file = argv[1]
 
             if argc > 2:
                 password = argv[2]
 
+            downloader = Downloader(url_or_file=url_or_file, password=password)
+
             # Run
-            _print(f"Starting, please wait...{NEW_LINE}")
-            Main(url=url, password=password)
+            downloader.run()
         else:
             die(f"Usage:"
                 f"{NEW_LINE}"
@@ -710,5 +807,8 @@ if __name__ == "__main__":
                 f"python gofile-downloader.py https://gofile.io/d/contentid password"
             )
     except KeyboardInterrupt:
+        if downloader:
+            downloader.stop()
+
         exit(1)
 
