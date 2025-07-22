@@ -245,8 +245,8 @@ class Downloader:
         if not response and response["status"] != "ok":
             die("Account creation failed!")
 
-        self._headers["Cookie"] = f"accountToken={response["data"]["token"]}"
-        self._headers["Authorization"] = f"Bearer {response["data"]["token"]}"
+        self._headers["Cookie"] = f"accountToken={response['data']['token']}"
+        self._headers["Authorization"] = f"Bearer {response['data']['token']}"
 
 
     def _download_content(self, file_info: dict[str, str]) -> None:
