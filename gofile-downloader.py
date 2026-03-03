@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 
-from os import getcwd, getenv, listdir, makedirs, name, path, rmdir, name
+from os import getcwd, getenv, listdir, makedirs, name, path, rmdir
 from sys import argv, exit, stdout, stderr
 from typing import Any, Iterator, NoReturn, TextIO
 from types import FrameType
@@ -13,7 +13,7 @@ from threading import Event
 from hashlib import sha256
 from shutil import move
 from signal import signal, SIGINT, SIG_IGN
-from time import perf_counter
+from time import perf_counter, time
 
 
 NEW_LINE: str = "\n" if name != "nt" else "\r\n"
@@ -75,6 +75,17 @@ def die(msg: str) -> NoReturn:
 
     _print(f"{msg}{NEW_LINE}", True)
     exit(-1)
+
+
+def generate_website_token(user_agent: str, account_token: str) -> str:
+    """
+    generate_website_token
+
+    Generates the dynamic X-Website-Token required by GoFile API.
+    """
+    time_slot = int(time()) // 14400
+    raw = f"{user_agent}::en-US::{account_token}::{time_slot}::gf2026x"
+    return sha256(raw.encode()).hexdigest()
 
 
 class Downloader:
@@ -597,7 +608,18 @@ class Downloader:
         if password:
             url = f"{url}&password={password}"
 
-        response: Response | None = self._get_response(url=url, headers={"X-Website-Token": "4fd6sg89d7s6"})
+        user_agent: str = str(self._session.headers.get("User-Agent", "Mozilla/5.0"))
+        auth_header: str = str(self._session.headers.get("Authorization", ""))
+        account_token: str = auth_header.replace("Bearer ", "") if auth_header else ""
+        wt: str = generate_website_token(user_agent, account_token)
+
+        response: Response | None = self._get_response(
+            url=url,
+            headers={
+                "X-Website-Token": wt,
+                "X-BL": "en-US"
+            }
+        )
         json_response: dict[str, Any] = {} if not response else response.json()
 
         if not json_response or json_response["status"] != "ok":
@@ -735,6 +757,8 @@ class Manager:
             "User-Agent": self._user_agent if self._user_agent else "Mozilla/5.0",
             "Connection": "keep-alive",
             "Accept": "*/*",
+            "Origin": "https://gofile.io",
+            "Referer": "https://gofile.io/",
         })
 
 
@@ -828,11 +852,18 @@ class Manager:
             return
 
         response: dict[Any, Any] = {}
+        
+        user_agent: str = str(self._session.headers.get("User-Agent", "Mozilla/5.0"))
+        wt: str = generate_website_token(user_agent, "")
 
         for _ in range(self._number_retries):
             try:
                 response = self._session.post(
                     "https://api.gofile.io/accounts",
+                    headers={
+                        "X-Website-Token": wt,
+                        "X-BL": "en-US"
+                    },
                     timeout=self._timeout
                 ).json()
             except Timeout:
@@ -901,4 +932,3 @@ if __name__ == "__main__":
             f"{NEW_LINE}"
             f"python gofile-downloader.py https://gofile.io/d/contentid password"
         )
-
