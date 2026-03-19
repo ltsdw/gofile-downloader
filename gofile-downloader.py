@@ -84,7 +84,7 @@ def generate_website_token(user_agent: str, account_token: str) -> str:
     Generates the dynamic X-Website-Token required by GoFile API.
     """
     time_slot = int(time()) // 14400
-    raw = f"{user_agent}::en-US::{account_token}::{time_slot}::gf2026x"
+    raw = f"{user_agent}::en-US::{account_token}::{time_slot}::f4s58gs6"
     return sha256(raw.encode()).hexdigest()
 
 
