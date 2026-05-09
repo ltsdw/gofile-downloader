@@ -10,18 +10,19 @@ Download files from https://gofile.io
 
 </br>
 
-Python version 3.10 or newer.
+- Python version 3.10 or newer.
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)**: A blazing-fast Python package and project manager. (If you have pip installed, you can use it to install uv: `pip install uv`)
 
 ---
-
 
 #### Dependencies
 
 </br>
 
-```cmd
-pip3 install -r requirements.txt
-```
+With `uv`, you don't need to manually install dependencies or manage virtual environments. The `uv run` command handles everything automatically on the fly.
+
+_(Optional: If you just want to install the dependencies without running the script, use `uv sync`)_
+
 ---
 
 #### Usage
@@ -29,41 +30,41 @@ pip3 install -r requirements.txt
 </br>
 
 ```
-python gofile-downloader.py https://gofile.io/d/contentid
+uv run gofile-downloader.py [https://gofile.io/d/contentid](https://gofile.io/d/contentid)
 ```
 
 If it has password:
 
 ```
-python gofile-downloader.py https://gofile.io/d/contentid password
+uv run gofile-downloader.py [https://gofile.io/d/contentid](https://gofile.io/d/contentid) password
 ```
 
 If you have a text file with multiple urls:
 
 ```
-https://gofile.io/d/contentid1
-https://gofile.io/d/contentid2
-https://gofile.io/d/contentid3
-https://gofile.io/d/contentid4
+[https://gofile.io/d/contentid1](https://gofile.io/d/contentid1)
+[https://gofile.io/d/contentid2](https://gofile.io/d/contentid2)
+[https://gofile.io/d/contentid3](https://gofile.io/d/contentid3)
+[https://gofile.io/d/contentid4](https://gofile.io/d/contentid4)
 ```
 
 ```
-python gofile-downloader.py my-urls.txt
+uv run gofile-downloader.py my-urls.txt
 ```
 
 If you specify a password, this password will be used for ALL urls provided in the text file:
 
 ```
-python gofile-downloader.py my-urls.txt password
+uv run gofile-downloader.py my-urls.txt password
 ```
 
 It's possible to provide per link password, just don't pass the password altogether, provide the password in the text file separated by a space.
 
 ```
-https://gofile.io/d/contentid1 password1
-https://gofile.io/d/contentid2
-https://gofile.io/d/contentid3
-https://gofile.io/d/contentid4 password4
+[https://gofile.io/d/contentid1](https://gofile.io/d/contentid1) password1
+[https://gofile.io/d/contentid2](https://gofile.io/d/contentid2)
+[https://gofile.io/d/contentid3](https://gofile.io/d/contentid3)
+[https://gofile.io/d/contentid4](https://gofile.io/d/contentid4) password4
 ```
 
 ---
@@ -72,73 +73,32 @@ https://gofile.io/d/contentid4 password4
 
 </br>
 
-Use the environment variable **`GF_DOWNLOAD_DIR`** to specify where to download to (the
-path must exist already):
+The script behavior can be customized using environment variables. Instead of passing them via your terminal (which changes depending on your OS), you can simply create a `.env` file in the root directory of this project. `uv` will load them automatically.
 
-| Shell | Command |
-|:---:| :---: |
-| **Windows Powershell** | `set GF_DOWNLOAD_DIR="C:\path\to\the\directory" && python gofile-downloader.py <url>` |
-| **Unix Shell** | `GF_DOWNLOAD_DIR="/path/to/the/directory" python gofile-downloader.py <url>`          |
+Create a `.env` file and set your desired configurations:
 
-</br>
+```env
+# Specify where to download to (the path must exist already)
+GF_DOWNLOAD_DIR="./downloads"
 
-Use the environment variable **`GF_USERAGENT`** to specify browser user agent (defaults Mozilla/5.0):
+# Toggle manual file selection to download (1 for True)
+GF_INTERACTIVE="1"
 
-| Platform | Command |
-| :---: | :---: |
-| **Windows Powershell** | `set GF_USERAGENT="user agent string" && python gofile-downloader.py <url>` |
-| **Unix Shell**         | `GF_USERAGENT="user agent string" python gofile-downloader.py <url>` |
+# Specify a specific account token
+GF_TOKEN="your_account_token_here"
 
-</br>
+# Configure the maximum number of concurrent downloads
+GF_MAX_CONCURRENT_DOWNLOADS="5"
 
-Use the environment variable **`GF_TOKEN`** to specify a specific account token:
+# Configure the number of retries on timeout
+GF_MAX_RETRIES="5"
 
-| Platform | Command |
-| :---: | :---: |
-| **Windows Powershell** | `set GF_TOKEN="account_token string" && python gofile-downloader.py <url>` |
-| **Unix Shell**         | `GF_TOKEN="account_token string" python gofile-downloader.py <url>` |
+# Configure a timeout for connections (in seconds)
+GF_TIMEOUT="15.0"
 
-</br>
+# Configure the number of bytes read per chunk
+GF_CHUNK_SIZE="2097152"
 
-Use the environment variable **`GF_INTERACTIVE`** to toggle manual file selection to download:
-
-| Platform | Command |
-| :---: | :---: |
-| **Windows Powershell** | `set GF_INTERACTIVE="1" && python gofile-downloader.py <url>` |
-| **Unix Shell**         | `GF_INTERACTIVE="1" python gofile-downloader.py <url>` |
-
-</br>
-
-Use the environment variable **`GF_MAX_CONCURRENT_DOWNLOADS`** to configure the maximum number of concurrent downloads:
-
-| Platform | Command |
-| :---: | :---: |
-| **Windows Powershell** | `set GF_MAX_CONCURRENT_DOWNLOADS="5" && python gofile-downloader.py <url>` |
-| **Unix Shell**         | `GF_MAX_CONCURRENT_DOWNLOADS="5" python gofile-downloader.py <url>` |
-
-</br>
-
-Use the environment variable **`GF_MAX_RETRIES`** to configure the number of retries on timeout:
-
-| Platform | Command |
-| :---: | :---: |
-| **Windows Powershell** | `set GF_MAX_RETRIES="5" && python gofile-downloader.py <url>` |
-| **Unix Shell**         | `GF_MAX_RETRIES="5" python gofile-downloader.py <url>` |
-
-</br>
-
-Use the environment variable **`GF_TIMEOUT`** to configure a timeout for connections:
-
-| Platform | Command |
-| :---: | :---: |
-| **Windows Powershell** | `set GF_TIMEOUT="15.0" && python gofile-downloader.py <url>` |
-| **Unix Shell**         | `GF_TIMEOUT="15.0" python gofile-downloader.py <url>` |
-
-</br>
-
-Use the environment variable **`GF_CHUNK_SIZE`** to configure the number of bytes read per chunk:
-
-| Platform | Command |
-| :---: | :---: |
-| **Windows Powershell** | `set GF_CHUNK_SIZE="2097152" && python gofile-downloader.py <url>` |
-| **Unix Shell**         | `GF_CHUNK_SIZE="2097152" python gofile-downloader.py <url>` |
+# Specify browser user agent (defaults Mozilla/5.0)
+GF_USERAGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)..."
+```
