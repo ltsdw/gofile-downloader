@@ -1,0 +1,9 @@
+[project]
+name = "gofile-downloader"
+version = "0.1.0"
+description = "Download files from https://gofile.io"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.33.1",
+]
