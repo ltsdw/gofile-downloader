@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 
-from os import getcwd, getenv, listdir, makedirs, name, path, rmdir
+from os import getcwd, getenv, name
 from sys import argv, exit, stdout, stderr
 from typing import Any, Iterator, NoReturn, TextIO
 from types import FrameType
@@ -11,9 +11,11 @@ from requests.structures import CaseInsensitiveDict
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from hashlib import sha256
-from shutil import move
 from signal import signal, SIGINT, SIG_IGN
 from time import perf_counter, time
+from pathlib import Path
+from urllib.parse import urlparse, ParseResult
+from typing import cast
 
 
 NEW_LINE: str = "\n" if name != "nt" else "\r\n"
@@ -91,7 +93,7 @@ def generate_website_token(user_agent: str, account_token: str) -> str:
 class Downloader:
     def __init__(
         self,
-        root_dir: str,
+        root_dir: Path,
         interactive: bool,
         max_workers: int,
         number_retries,
@@ -124,7 +126,7 @@ class Downloader:
         # Dictionary to hold information about file and its directories structure
         # {"index": {"path": "", "filename": "", "link": ""}}
         # where the largest index is the top most file
-        self._files_info: dict[str, dict[str, str]] = {}
+        self._files_info: dict[str, dict[str, Path | str]] = {}
 
         self._max_workers: int = max_workers
         self._number_retries: int = number_retries
@@ -134,7 +136,7 @@ class Downloader:
         self._password: str | None = password
         self._session: Session = session
         self._stop_event: Event = stop_event
-        self._root_dir: str = root_dir
+        self._root_dir: Path = root_dir
         self._url: str = url
 
 
@@ -158,12 +160,16 @@ class Downloader:
             return
 
         _password: str | None = sha256(self._password.encode()).hexdigest() if self._password else None
+        content_dir: Path = self._root_dir / content_id
 
-        content_dir: str = path.join(self._root_dir, content_id)
+        # creates the content directory. all files must go within the root-directory/<content-id>
+        # and never in the root-directory/.
+        self._create_dirs(content_dir)
+
         self._build_content_tree_structure(content_dir, content_id, _password)
 
         # removes the root content directory if there's no file or subdirectory
-        if path.exists(content_dir) and not listdir(content_dir) and not self._files_info:
+        if content_dir.exists() and not any(content_dir.iterdir()) and not self._files_info:
             _print(f"Empty directory for url: {self._url}, nothing done.{NEW_LINE}")
             self._remove_dir(content_dir)
             return
@@ -209,7 +215,7 @@ class Downloader:
 
 
     @staticmethod
-    def _create_dirs(dirname: str) -> None:
+    def _create_dirs(dirname: Path) -> None:
         """
         _create_dirs
 
@@ -219,11 +225,11 @@ class Downloader:
         :return:
         """
 
-        makedirs(dirname, exist_ok = True)
+        dirname.mkdir(parents=True, exist_ok=True)
 
 
     @staticmethod
-    def _remove_dir(dirname: str) -> None:
+    def _remove_dir(dirname: Path) -> None:
         """
         _remove_dir
 
@@ -234,12 +240,12 @@ class Downloader:
         """
 
         try:
-            rmdir(dirname)
+            dirname.rmdir()
         except:
             pass
 
 
-    def _download_content(self, file_info: dict[str, str]) -> None:
+    def _download_content(self, file_info: dict[str, Path | str]) -> None:
         """
         _download_content
 
@@ -249,24 +255,21 @@ class Downloader:
         :return:
         """
 
-        filepath: str = path.join(file_info["path"], file_info["filename"])
+        filepath: Path = cast(Path, file_info["path"]) / file_info["filename"]
 
         if self._should_skip_download(filepath):
             return
 
-        tmp_file: str =  f"{filepath}.part"
-        url: str = file_info["link"]
-
+        tmp_file: Path = filepath.with_name(filepath.name + ".part")
+        url: str = cast(str, file_info["link"])
         headers: dict[str, str] = {}
-        if path.isfile(tmp_file):
-            part_size = int(path.getsize(tmp_file))
-            headers = {"Range": f"bytes={part_size}-"}
 
         for _ in range(self._number_retries):
             try:
                 part_size: int = 0
-                if path.isfile(tmp_file):
-                    part_size = int(path.getsize(tmp_file))
+
+                if tmp_file.is_file():
+                    part_size = tmp_file.stat().st_size
                     headers = {"Range": f"bytes={part_size}-"}
 
                 has_size: str | None = self._perform_download(
@@ -285,7 +288,7 @@ class Downloader:
 
 
     @staticmethod
-    def _should_skip_download(filepath: str) -> bool:
+    def _should_skip_download(filepath: Path) -> bool:
         """
         _should_skip_download
 
@@ -295,7 +298,7 @@ class Downloader:
         :return: True if download should be skipped, False otherwise.
         """
 
-        if path.exists(filepath) and path.getsize(filepath) > 0:
+        if filepath.exists() and filepath.stat().st_size > 0:
             _print(f"{filepath} already exist, skipping.{NEW_LINE}")
             return True
         return False
@@ -303,9 +306,9 @@ class Downloader:
 
     def _perform_download(
         self,
-        file_info: dict[str, str],
+        file_info: dict[str, Path | str],
         url: str,
-        tmp_file: str,
+        tmp_file: Path,
         headers: dict[str, str],
         part_size: int,
     ) -> str | None:
@@ -360,7 +363,7 @@ class Downloader:
                 tmp_file,
                 part_size,
                 float(has_size),
-                file_info["filename"]
+                cast(str, file_info["filename"])
             )
 
             return has_size
@@ -413,7 +416,7 @@ class Downloader:
     def _write_chunks(
         self,
         chunks: Iterator[Any],
-        tmp_file: str,
+        tmp_file: Path,
         part_size: int,
         total_size: float,
         filename: str
@@ -489,7 +492,7 @@ class Downloader:
 
 
     @staticmethod
-    def _finalize_download(file_info: dict[str, str], tmp_file: str, has_size: str) -> None:
+    def _finalize_download(file_info: dict[str, Path | str], tmp_file: Path, has_size: str) -> None:
         """
         _finalize_download
 
@@ -501,16 +504,16 @@ class Downloader:
         :return:
         """
 
-        if path.getsize(tmp_file) == int(has_size):
+        if tmp_file.stat().st_size == int(has_size):
             _print(
                 f"{TERMINAL_CLEAR_LINE}"
-                f"Downloading {file_info['filename']}: {path.getsize(tmp_file)} "
+                f"Downloading {file_info['filename']}: {tmp_file.stat().st_size} "
                 f"of {has_size} Done!{NEW_LINE}"
             )
-            move(tmp_file, path.join(file_info["path"], file_info["filename"]))
+            tmp_file.rename(cast(Path, file_info["path"]) / file_info["filename"])
 
 
-    def _register_file(self, file_index: count, filepath: str, file_url: str) -> None:
+    def _register_file(self, file_index: count, filepath: Path, file_url: str) -> None:
         """
         _register_file
 
@@ -526,8 +529,8 @@ class Downloader:
         """
 
         self._files_info[str(next(file_index))] = {
-            "path": path.dirname(filepath),
-            "filename": path.basename(filepath),
+            "path": filepath.parent,
+            "filename": filepath.name,
             "link": file_url
         }
 
@@ -535,10 +538,10 @@ class Downloader:
     @staticmethod
     def _resolve_naming_collision(
         pathing_count: dict[str, int],
-        absolute_parent_dir: str,
+        absolute_parent_dir: Path,
         child_name: str,
         is_dir: bool = False,
-    ) -> str:
+    ) -> Path:
         """
         _resolve_naming_collision
 
@@ -555,28 +558,26 @@ class Downloader:
         :return: a unique filepath string with a numeric suffix appended if needed.
         """
 
-        filepath: str = path.join(absolute_parent_dir, child_name)
+        filepath: Path = absolute_parent_dir / child_name
+        filepath_str: str = str(filepath)
 
         if filepath in pathing_count:
-            pathing_count[filepath] += 1
+            pathing_count[filepath_str] += 1
         else:
-            pathing_count[filepath] = 0
+            pathing_count[filepath_str] = 0
 
-        if pathing_count and pathing_count[filepath] > 0 and is_dir:
-            return f"{filepath}({pathing_count[filepath]})"
+        if pathing_count and pathing_count[filepath_str] > 0 and is_dir:
+            return filepath.with_name(f"{filepath.name}({pathing_count[filepath_str]})")
 
-        if pathing_count and pathing_count[filepath] > 0:
-            extension: str
-            root, extension = path.splitext(filepath)
-
-            return f"{root}({pathing_count[filepath]}){extension}"
+        if pathing_count and pathing_count[filepath_str] > 0:
+            return filepath.with_name(f"{filepath.stem}({pathing_count[filepath_str]}){filepath.suffix}")
 
         return filepath
 
 
     def _build_content_tree_structure(
         self,
-        parent_dir: str,
+        parent_dir: Path,
         content_id: str,
         password: str | None = None,
         pathing_count: dict[str, int] | None = None,
@@ -633,20 +634,19 @@ class Downloader:
             return
 
         if data["type"] != "folder":
-            filepath: str = self._resolve_naming_collision(pathing_count, parent_dir, data["name"])
-
+            filepath: Path = self._resolve_naming_collision(pathing_count, parent_dir, data["name"])
             self._register_file(file_index, filepath, data["link"])
             return
 
         folder_name: str = data["name"]
-        absolute_path: str = self._resolve_naming_collision(pathing_count, parent_dir, folder_name)
 
-        # If the content directory (the root directory) directory isn't named the same as the content_id,
-        # use the content_id as a name for the content directory.
-        #
-        # Also do not use the default root directory named as "root" created by default.
-        if path.basename(parent_dir) == content_id:
+        # Do not create the root directory again when the remote root folder
+        # has the same name as the content ID. Otherwise, this would produce:
+        # root-directory/<content-id>/<content-id>
+        if parent_dir == self._root_dir / folder_name:
             absolute_path = parent_dir
+        else:
+            absolute_path: Path = self._resolve_naming_collision(pathing_count, parent_dir, folder_name)
 
         self._create_dirs(absolute_path)
 
@@ -655,8 +655,7 @@ class Downloader:
             if child["type"] == "folder":
                 self._build_content_tree_structure(absolute_path, child["id"], password, pathing_count, file_index)
             else:
-                filepath: str = self._resolve_naming_collision(pathing_count, absolute_path, child["name"])
-
+                filepath: Path = self._resolve_naming_collision(pathing_count, absolute_path, child["name"])
                 self._register_file(file_index, filepath, child["link"])
 
 
@@ -674,7 +673,7 @@ class Downloader:
 
         for (k, v) in self._files_info.items():
             # Trim the filepath if it's too long
-            filepath: str = path.join(v["path"], v["filename"])
+            filepath: str = str(cast(Path, v["path"]) / v["filename"])
             filepath = f"...{filepath[-MAX_FILENAME_CHARACTERS:]}" \
                 if len(filepath) > MAX_FILENAME_CHARACTERS \
                 else filepath
@@ -687,7 +686,7 @@ class Downloader:
             )
 
 
-    def _do_interactive(self, content_dir: str) -> None:
+    def _do_interactive(self, content_dir: Path) -> None:
         """
         _do_interactive
 
@@ -732,7 +731,7 @@ class Manager:
         :return:
         """
 
-        root_dir: str | None = getenv("GF_DOWNLOAD_DIR")
+        _root_dir: str | None = getenv("GF_DOWNLOAD_DIR")
 
         # Defaults to 5 concurrent downloads
         self._max_workers: int = int(getenv("GF_MAX_CONCURRENT_DOWNLOADS", 5))
@@ -750,7 +749,7 @@ class Manager:
 
         self._session: Session = Session()
         self._stop_event: Event = Event()
-        self._root_dir: str = root_dir if root_dir else getcwd()
+        self._root_dir: Path = Path(_root_dir) if _root_dir else Path(getcwd())
 
         self._session.headers.update({
             "Accept-Encoding": "gzip",
@@ -762,6 +761,33 @@ class Manager:
         })
 
 
+    @staticmethod
+    def _normalize_http_url(value: str) -> str | None:
+        """
+        _normalize_http_url
+
+        Normalize value as an url if it's a possible url-like string, otherwise returning None.
+
+        :value: possible url-like string.
+        :return: a normalized url or None if it can't be normalized as one.
+        """
+
+        value = value.strip()
+        parsed: ParseResult = urlparse(value)
+
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return value
+
+        if not parsed.scheme and "." in parsed.path:
+            candidate: str = f"https://{value}"
+            parsed = urlparse(candidate)
+
+            if parsed.netloc:
+                return candidate
+
+        return None
+
+
     def _parse_url_or_file(self) -> None:
         """
         _parse_url_or_file
@@ -771,7 +797,14 @@ class Manager:
         :return:
         """
 
-        if not (path.exists(self._url_or_file) and path.isfile(self._url_or_file)):
+        source: str = self._url_or_file.strip()
+        filepath: Path = Path(source).expanduser()
+        url: str | None = self._normalize_http_url(source)
+
+        if not filepath.is_file() and not url:
+            die(f"{source} is either a valid url or local url file.")
+
+        if not filepath.is_file() and url:
             downloader: Downloader = Downloader(
                 self._root_dir,
                 self._interactive,
@@ -781,7 +814,7 @@ class Manager:
                 self._chunk_size,
                 self._stop_event,
                 self._session,
-                self._url_or_file,
+                url,
                 self._password
             )
 
@@ -789,7 +822,7 @@ class Manager:
 
             return
 
-        with open(self._url_or_file, "r") as f:
+        with open(filepath, "r") as f:
             lines: list[str] = f.readlines()
 
         # I think it's better to limit this one here, the api may get angry if we starve it.
@@ -802,7 +835,13 @@ class Manager:
                     return
 
                 line_splitted: list[str] = line.split(" ")
-                url: str = line_splitted[0].strip()
+                source = line_splitted[0].strip()
+                url = self._normalize_http_url(source)
+
+                if not url:
+                    _print(f"{source} is not a valid url.")
+                    continue
+
                 password: str | None = self._password if self._password else line_splitted[1].strip() \
                     if len(line_splitted) > 1 else self._password
                 downloader: Downloader = Downloader(
@@ -852,7 +891,6 @@ class Manager:
             return
 
         response: dict[Any, Any] = {}
-        
         user_agent: str = str(self._session.headers.get("User-Agent", "Mozilla/5.0"))
         wt: str = generate_website_token(user_agent, "")
 
